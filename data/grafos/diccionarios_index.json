@@ -1,0 +1,56 @@
+[
+  {
+    "nombre": "Diccionario Violencias",
+    "archivo": "Diccionario_Violencias.json"
+  },
+  {
+    "nombre": "diccionario de violecias",
+    "archivo_json": "diccionario_de_violecias.json",
+    "archivo_graphml": "diccionario_de_violecias.graphml"
+  },
+  {
+    "nombre": "Violecia",
+    "archivo_json": "Violecia.json",
+    "archivo_graphml": "Violecia.graphml"
+  },
+  {
+    "nombre": "Violenciass",
+    "archivo_json": "Violenciass.json",
+    "archivo_graphml": "Violenciass.graphml"
+  },
+  {
+    "nombre": "V",
+    "archivo_json": "V.json",
+    "archivo_graphml": "V.graphml"
+  },
+  {
+    "nombre": "Vionecia_corto",
+    "archivo_json": "Vionecia_corto.json",
+    "archivo_graphml": "Vionecia_corto.graphml"
+  },
+  {
+    "nombre": "NuevoDiccionario_M",
+    "archivo_json": "NuevoDiccionario_M.json",
+    "archivo_graphml": "NuevoDiccionario_M.graphml"
+  },
+  {
+    "nombre": "Medicina_prueba",
+    "archivo_json": "Medicina_prueba.json",
+    "archivo_graphml": "Medicina_prueba.graphml"
+  },
+  {
+    "nombre": "CV",
+    "archivo_json": "CV.json",
+    "archivo_graphml": "CV.graphml"
+  },
+  {
+    "nombre": "M",
+    "archivo_json": "M.json",
+    "archivo_graphml": "M.graphml"
+  },
+  {
+    "nombre": "Corpus Divulgación",
+    "archivo_json": "Corpus_Divulgación.json",
+    "archivo_graphml": "Corpus_Divulgación.graphml"
+  }
+]

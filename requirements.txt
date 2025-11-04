@@ -1,0 +1,9 @@
+Flask>=2.0
+requests
+networkx
+nltk
+spacy
+scipy
+scikit-learn
+numpy
+node2vec

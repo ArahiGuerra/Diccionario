@@ -1,0 +1,4 @@
+body { background: #f8f9fa; }
+#container-main { align-items: stretch; }
+#corpusList .list-group-item { cursor: pointer; }
+#corpusList .list-group-item.active { background-color: #0d6efd; border-color: #0d6efd; color: white; }

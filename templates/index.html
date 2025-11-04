@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+      <li class="nav-item">
+        <button class="nav-link active" id="tab1-tab" data-bs-toggle="tab" data-bs-target="#tab1" type="button">
+          Seleccionar corpus y procesar
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" id="tab2-tab" data-bs-toggle="tab" data-bs-target="#tab2" type="button">
+          Buscar por definición
+        </button>
+      </li>
+    </ul>
+
+    <div class="tab-content mt-3">
+      <!-- Pestaña 1 -->
+      <div class="tab-pane fade show active" id="tab1" role="tabpanel">
+        <div class="d-flex gap-3" id="container-main">
+          <!-- Izquierda: lista de corpus -->
+          <div class="card flex-fill" style="min-width: 220px; max-width: 320px;">
+            <div class="card-header">Corpus disponibles</div>
+            <div class="card-body overflow-auto" style="max-height: 60vh;">
+              <ul id="corpusList" class="list-group">
+                <!-- se llena con JS -->
+              </ul>
+            </div>
+          </div>
+
+          <!-- Medio: documentos del corpus -->
+          <div class="card flex-fill" style="min-width: 360px;">
+            <div class="card-header">Documentos en el corpus seleccionado</div>
+            <div class="card-body overflow-auto" style="max-height: 60vh;">
+              <div id="documentsContainer">
+                <p class="text-muted">Selecciona un corpus a la izquierda.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Derecha: botón y estado -->
+          <div class="card" style="min-width: 260px; max-width: 320px;">
+            <div class="card-header">Acciones</div>
+            <div class="card-body">
+              <div class="mb-3">
+                <label for="selectedCorpus" class="form-label">Corpus seleccionado</label>
+                <input type="text" id="selectedCorpus" class="form-control" readonly>
+              </div>
+              <div class="d-grid gap-2 mb-3">
+                <button id="processBtn" class="btn btn-success">Procesar archivos y generar grafo</button>
+              </div>
+              <div>
+                <label class="form-label">Estado del proceso</label>
+                <div id="statusBox" class="border rounded p-2 small">idle</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- Pestaña 2 -->
+      <div class="tab-pane fade" id="tab2" role="tabpanel">
+        <div class="row">
+          <div class="col-md-6">
+            <div class="card mb-3">
+              <div class="card-header">Diccionarios disponibles</div>
+              <div class="card-body">
+                <select id="diccionarioSelect" class="form-select mb-3"></select>
+                <button id="loadDiccionarioBtn" class="btn btn-outline-primary btn-sm">Cargar diccionario</button>
+                <div id="diccionarioStatus" class="small text-muted mt-2">Ninguno cargado</div>
+              </div>
+            </div>
+
+            <div class="card mb-3">
+              <div class="card-header">Grafo actual</div>
+              <div class="card-body">
+                <div id="graphSummary">Cargando grafo...</div>
+                <div id="graphView" style="height: 400px; border: 1px solid #ddd; margin-top:10px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <div class="card mb-3">
+              <div class="card-header">Buscar por definición</div>
+              <div class="card-body">
+                <textarea id="definitionInput" class="form-control mb-2" rows="4"
+                  placeholder="Introduce la definición..."></textarea>
+                <button id="searchBtn" class="btn btn-primary mb-3">Buscar</button>
+                <div>
+                  <h6>Resultados</h6>
+                  <ol id="resultsList"></ol>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div> <!-- end tab2 -->
+    </div>
+  </div>
+</div>
+{% endblock %}
