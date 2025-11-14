@@ -18,43 +18,47 @@ document.addEventListener("DOMContentLoaded", function () {
   let selectedCorpus = null;
   let currentDocuments = [];
   let currentDiccionario = null;
-  let lastMetaRes = null; // Guardamos metadatos cargados para mantenerlos visibles
+  let lastMetaRes = null; // Guardar metadatos cargados
+  let lastFilterSelection = {}; // Guardar selecciones actuales
 
   // ======================
   // CARGAR CORPUS
   // ======================
-  fetch("/api/corpora").then(r => r.json()).then(res => {
-    if (res.ok) {
-      res.data.forEach(c => {
-        const li = document.createElement("li");
-        li.className = "list-group-item";
-        li.innerText = c.nombre;
-        li.dataset.id = c.id;
-        li.addEventListener("click", function () {
-          document.querySelectorAll("#corpusList .list-group-item").forEach(x => x.classList.remove("active"));
-          this.classList.add("active");
-          selectedCorpus = { id: c.id, nombre: c.nombre };
-          selectedCorpusInput.value = c.nombre;
-          loadDocuments(c.id);
+  fetch("/api/corpora")
+    .then(r => r.json())
+    .then(res => {
+      if (res.ok) {
+        res.data.forEach(c => {
+          const li = document.createElement("li");
+          li.className = "list-group-item";
+          li.innerText = c.nombre;
+          li.dataset.id = c.id;
+          li.addEventListener("click", function () {
+            document.querySelectorAll("#corpusList .list-group-item").forEach(x => x.classList.remove("active"));
+            this.classList.add("active");
+            selectedCorpus = { id: c.id, nombre: c.nombre };
+            selectedCorpusInput.value = c.nombre;
+            loadDocuments(c.id);
+          });
+          corpusListEl.appendChild(li);
         });
-        corpusListEl.appendChild(li);
-      });
-    } else {
-      corpusListEl.innerHTML = "<li class='list-group-item text-danger'>Error cargando corpora</li>";
-    }
-  });
+      } else {
+        corpusListEl.innerHTML = "<li class='list-group-item text-danger'>Error cargando corpora</li>";
+      }
+    });
 
   // ======================
-  // CARGAR DOCUMENTOS + METADATOS
+  // CARGAR DOCUMENTOS + METADATOS (con múltiples filtros)
   // ======================
   function loadDocuments(corpusId) {
     documentsContainer.innerHTML = "<p class='text-muted'>Cargando documentos...</p>";
 
-    // Primero cargamos los metadatos disponibles
-    fetch(`/api/metadatos/${corpusId}`).then(r => r.json()).then(metaRes => {
-      lastMetaRes = metaRes; // guardamos para reusar después
-      renderDocuments(corpusId, metaRes);
-    });
+    fetch(`/api/metadatos/${corpusId}`)
+      .then(r => r.json())
+      .then(metaRes => {
+        lastMetaRes = metaRes;
+        renderDocuments(corpusId, metaRes);
+      });
   }
 
   function renderDocuments(corpusId, metaRes, filteredDocs = null) {
@@ -62,27 +66,40 @@ document.addEventListener("DOMContentLoaded", function () {
     let metaPanel = "";
     if (metaRes.ok && metaRes.data.length > 0) {
       metaPanel = `
-        <div class="mb-2 p-2 border rounded bg-light">
-          <label class="form-label small mb-1">Filtrar por metadato:</label>
-          <div class="input-group input-group-sm mb-2">
-            <select id="metaSelect" class="form-select">
-              <option value="">--Selecciona metadato--</option>
-              ${metaRes.data.map(m => `<option value="${m.nombre}">${m.nombre}</option>`).join("")}
-            </select>
-            <select id="valorSelect" class="form-select">
-              <option value="">--Valor--</option>
-            </select>
-            <button id="applyFilter" class="btn btn-sm btn-primary">Filtrar</button>
-          </div>
-        </div>`;
+      <div class="mb-2 p-2 border rounded bg-light">
+        <label class="form-label small mb-1"> Metadatos disponibles para el corpus:</label>
+        <div id="multiMetaPanel" class="mb-2">
+          ${metaRes.data
+          .map(
+            (m, i) => `
+            <div class="input-group input-group-sm mb-2">
+              <span class="input-group-text">${m.nombre}</span>
+              <select id="valor_${i}" class="form-select" data-meta="${m.nombre}">
+                <option value="">--Cualquiera--</option>
+                ${m.valores
+                .map(
+                  v =>
+                    `<option value="${v}" ${lastFilterSelection[m.nombre] === v ? "selected" : ""
+                    }>${v}</option>`
+                )
+                .join("")}
+              </select>
+            </div>
+          `
+          )
+          .join("")}
+        </div>
+      </div>`;
     }
 
-    // Si no hay documentos filtrados, los cargamos todos
+    // Si no hay documentos filtrados, carga todos
     if (!filteredDocs) {
-      fetch(`/api/documentos/${corpusId}`).then(r => r.json()).then(res => {
-        if (res.ok) showDocuments(res.data, corpusId, metaPanel);
-        else documentsContainer.innerHTML = `<p class='text-danger'>${res.error}</p>`;
-      });
+      fetch(`/api/documentos/${corpusId}`)
+        .then(r => r.json())
+        .then(res => {
+          if (res.ok) showDocuments(res.data, corpusId, metaPanel);
+          else documentsContainer.innerHTML = `<p class='text-danger'>${res.error}</p>`;
+        });
     } else {
       showDocuments(filteredDocs, corpusId, metaPanel);
     }
@@ -91,24 +108,25 @@ document.addEventListener("DOMContentLoaded", function () {
   function showDocuments(docs, corpusId, metaPanel) {
     currentDocuments = docs;
     if (docs.length === 0) {
-      documentsContainer.innerHTML = "<p class='text-muted'>No hay documentos.</p>";
+      documentsContainer.innerHTML = metaPanel + "<p class='text-muted'>No hay documentos.</p>";
       return;
     }
 
     const form = document.createElement("div");
-    form.innerHTML = metaPanel + `
-      <div class='mb-2'>
-        <button id='selectAllDocs' class='btn btn-sm btn-outline-secondary'>Seleccionar todo</button>
-        <button id='clearAllDocs' class='btn btn-sm btn-outline-secondary'>Limpiar</button>
-      </div>`;
+    form.innerHTML =
+      metaPanel +
+      `
+    <div class='mb-2'>
+      <button id='selectAllDocs' class='btn btn-sm btn-outline-secondary'>Seleccionar todo</button>
+      <button id='clearAllDocs' class='btn btn-sm btn-outline-secondary'>Limpiar</button>
+    </div>`;
     const list = document.createElement("div");
 
     docs.forEach(doc => {
-      const id = doc.id;
       const fila = document.createElement("div");
       fila.className = "form-check";
-      fila.innerHTML = `<input class="form-check-input doc-check" type="checkbox" value="${id}" id="doc_${id}">
-                        <label class="form-check-label" for="doc_${id}">${doc.archivo}</label>`;
+      fila.innerHTML = `<input class="form-check-input doc-check" type="checkbox" value="${doc.id}" id="doc_${doc.id}">
+                      <label class="form-check-label" for="doc_${doc.id}">${doc.archivo}</label>`;
       list.appendChild(fila);
     });
 
@@ -117,44 +135,50 @@ document.addEventListener("DOMContentLoaded", function () {
     documentsContainer.appendChild(form);
 
     document.getElementById("selectAllDocs").addEventListener("click", () => {
-      document.querySelectorAll(".doc-check").forEach(cb => cb.checked = true);
+      document.querySelectorAll(".doc-check").forEach(cb => (cb.checked = true));
     });
     document.getElementById("clearAllDocs").addEventListener("click", () => {
-      document.querySelectorAll(".doc-check").forEach(cb => cb.checked = false);
+      document.querySelectorAll(".doc-check").forEach(cb => (cb.checked = false));
     });
+  }
 
-    const metaSelect = document.getElementById("metaSelect");
-    const valorSelect = document.getElementById("valorSelect");
-    const applyFilter = document.getElementById("applyFilter");
+  // ======================
+  // AUTO-APLICAR FILTRO AL CAMBIAR UN VALOR
+  // ======================
+  documentsContainer.addEventListener("change", e => {
+    if (e.target && e.target.matches("#multiMetaPanel select")) {
+      const corpusId = selectedCorpus?.id;
+      if (!corpusId) return;
 
-    if (metaSelect) {
-      metaSelect.addEventListener("change", () => {
-        const selMeta = lastMetaRes.data.find(m => m.nombre === metaSelect.value);
-        valorSelect.innerHTML = "<option value=''>--Valor--</option>";
-        if (selMeta) {
-          selMeta.valores.forEach(v => {
-            valorSelect.innerHTML += `<option value="${v}">${v}</option>`;
-          });
+      // Recolectar todos los valores seleccionados
+      const selects = documentsContainer.querySelectorAll("#multiMetaPanel select");
+      const metas = [];
+      const valores = [];
+      lastFilterSelection = {};
+
+      selects.forEach(sel => {
+        if (sel.value && sel.dataset.meta) {
+          metas.push(sel.dataset.meta);
+          valores.push(sel.value);
+          lastFilterSelection[sel.dataset.meta] = sel.value;
         }
       });
 
-      applyFilter.addEventListener("click", () => {
-        const meta = metaSelect.value;
-        const valor = valorSelect.value;
-        if (!meta || !valor) return;
-        documentsContainer.innerHTML = "<p class='text-muted'>Aplicando filtro...</p>";
-        fetch(`/api/documentos/${corpusId}?meta=${encodeURIComponent(meta)}&valor=${encodeURIComponent(valor)}`)
-          .then(r => r.json())
-          .then(fres => {
-            if (fres.ok) {
-              renderDocuments(corpusId, lastMetaRes, fres.data); // Re-render con panel intacto
-            } else {
-              documentsContainer.innerHTML = `<p class='text-danger'>${fres.error}</p>`;
-            }
-          });
-      });
+      fetch(
+        `/api/documentos/${corpusId}?meta=${encodeURIComponent(metas.join(","))}&valor=${encodeURIComponent(
+          valores.join(",")
+        )}`
+      )
+        .then(r => r.json())
+        .then(fres => {
+          if (fres.ok) {
+            renderDocuments(corpusId, lastMetaRes, fres.data);
+          } else {
+            documentsContainer.innerHTML = `<p class='text-danger'>${fres.error}</p>`;
+          }
+        });
     }
-  }
+  });
 
   // ======================
   // PROCESAR Y GUARDAR DICCIONARIO
@@ -193,9 +217,9 @@ document.addEventListener("DOMContentLoaded", function () {
           currentDiccionario = dicName;
           diccionarioStatus.innerText = `Diccionario activo: ${dicName}`;
           alert("Diccionario guardado correctamente.");
-          document.querySelector('#tab2-tab').click();
+          document.querySelector("#tab2-tab").click();
         } else {
-          statusBox.innerText = "Error: " + (res.error || 'error desconocido');
+          statusBox.innerText = "Error: " + (res.error || "error desconocido");
         }
       })
       .catch(err => {
@@ -211,9 +235,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const res = await fetch("/api/diccionarios");
     const data = await res.json();
     if (data.ok && data.data.length > 0) {
-      diccionarioSelect.innerHTML = data.data.map(d =>
-        `<option value="${d.nombre}">${d.nombre}</option>`
-      ).join("");
+      diccionarioSelect.innerHTML = data.data.map(d => `<option value="${d.nombre}">${d.nombre}</option>`).join("");
     } else {
       diccionarioSelect.innerHTML = "<option value=''>No hay diccionarios guardados</option>";
     }
@@ -252,7 +274,10 @@ document.addEventListener("DOMContentLoaded", function () {
   // ======================
   searchBtn.addEventListener("click", function () {
     const def = definitionInput.value.trim();
-    if (!def) { alert("Introduce una definición."); return; }
+    if (!def) {
+      alert("Introduce una definición.");
+      return;
+    }
 
     if (!currentDiccionario) {
       alert("Selecciona o carga un diccionario antes de buscar.");
@@ -291,7 +316,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const nNodes = graphJson.nodes.length;
     const nEdges = graphJson.edges.length;
     const summary = document.createElement("div");
-    summary.innerHTML = `<p><strong>Nodos (muestra):</strong> ${nNodes}</p><p><strong>Aristas (muestra):</strong> ${nEdges}</p>`;
+    summary.innerHTML = `<p><strong>Nodos (muestra):</strong> ${nNodes}</p><p><strong>Aristas:</strong> ${nEdges}</p>`;
     graphView.appendChild(summary);
 
     const ul = document.createElement("ul");

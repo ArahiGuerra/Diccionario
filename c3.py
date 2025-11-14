@@ -604,6 +604,57 @@ def filtrar_documentos_por_metadatos_api(corpus_id, meta_nombre, valor):
 
     return documentos_filtrados
 
+# =====================================
+# NUEVA FUNCIÓN: FILTRAR POR VARIOS METADATOS (para API Flask/app.py)
+# =====================================
+
+
+def filtrar_documentos_por_varios_metadatos_api(corpus_id, metas, valores):
+    """
+    Filtra documentos que cumplan simultáneamente varios metadatos y valores.
+    Ejemplo:
+        metas = ["Área", "Lengua"]
+        valores = ["Medicina", "Español"]
+    Devuelve una lista de documentos (diccionarios con id y archivo).
+    """
+    import requests
+    from c3 import BASE_URL, headers
+
+    url = f"{BASE_URL}{corpus_id}/tabla"
+    r = requests.get(url, headers=headers)
+    r.raise_for_status()
+    data = r.json().get("data", {})
+
+    tabla = data.get("tabla", [])
+    metadatos = data.get("metadatos", [])
+
+    # Crear mapa de id_metadato → nombre_metadato
+    id_to_nombre = {m[0]: m[1] for m in metadatos}
+
+    # Crear mapa inverso: nombre_metadato → id_metadato
+    nombre_to_id = {m[1]: m[0] for m in metadatos}
+
+    # Convertir nombres a IDs (ignorando los que no existan)
+    filtros = []
+    for meta, valor in zip(metas, valores):
+        mid = nombre_to_id.get(meta)
+        if mid:
+            filtros.append((mid, valor))
+
+    documentos_filtrados = []
+    for doc in tabla:
+        doc_id, archivo, metas_doc = doc
+        # Crear dict rápido de {meta_id: valor}
+        metas_dict = {m[0]: m[1] for m in metas_doc}
+        # Comprobar que todos los pares meta=valor coinciden
+        cumple_todos = all(metas_dict.get(
+            mid) == valor for mid, valor in filtros)
+        if cumple_todos:
+            documentos_filtrados.append({"id": doc_id, "archivo": archivo})
+
+    return documentos_filtrados
+
+
 # --------------------------------------------
 # NUEVAS FUNCIONES PARA DICCIONARIOS
 # --------------------------------------------

@@ -87,29 +87,47 @@ def api_corpora():
 @app.route("/api/documentos/<int:corpus_id>", methods=["GET"])
 def api_documentos(corpus_id):
     """
-    Permite obtener:
-      - Todos los documentos del corpus
-      - O filtrar por metadatos con ?meta=NombreMetadato&valor=Valor
-    Ejemplo: /api/documentos/131?meta=Área&valor=Medicina
+    Obtiene documentos de un corpus, con opción de filtrar por uno o varios metadatos.
+    - Sin filtros: /api/documentos/131
+    - Filtro simple: /api/documentos/131?meta=Área&valor=Medicina
+    - Múltiples filtros: /api/documentos/131?meta=Área,Lengua&valor=Medicina,Español
     """
     try:
-        meta_nombre = request.args.get("meta")
-        valor = request.args.get("valor")
+        meta_param = request.args.get("meta")
+        valor_param = request.args.get("valor")
 
-        # Si se envía un metadato, filtramos directamente
-        if meta_nombre and valor:
+        # Caso: múltiples filtros separados por coma
+        if meta_param and valor_param:
+            metas = [m.strip() for m in meta_param.split(",")]
+            valores = [v.strip() for v in valor_param.split(",")]
+
+            # Si hay más de uno, usamos la nueva función
+            if len(metas) > 1:
+                from c3 import filtrar_documentos_por_varios_metadatos_api
+                documentos = filtrar_documentos_por_varios_metadatos_api(
+                    corpus_id, metas, valores
+                )
+                simplified = [
+                    {"id": d["id"], "archivo": d["archivo"]} for d in documentos
+                ]
+                return jsonify({"ok": True, "data": simplified, "filtered": True})
+
+            # Si hay solo uno, usamos la función clásica
             from c3 import filtrar_documentos_por_metadatos_api
             documentos = filtrar_documentos_por_metadatos_api(
-                corpus_id, meta_nombre, valor)
+                corpus_id, metas[0], valores[0]
+            )
             simplified = [{"id": d["id"], "archivo": d["archivo"]}
                           for d in documentos]
             return jsonify({"ok": True, "data": simplified, "filtered": True})
 
-        # Si no se envían parámetros, listamos todos los documentos
+        # Si no se enviaron parámetros, listamos todos los documentos
         from c3 import listar_documentos
         documentos = listar_documentos(corpus_id)
-        simplified = [{"id": d["id"], "archivo": d.get(
-            "archivo", str(d.get("id")))} for d in documentos]
+        simplified = [
+            {"id": d["id"], "archivo": d.get("archivo", str(d.get("id")))}
+            for d in documentos
+        ]
         return jsonify({"ok": True, "data": simplified, "filtered": False})
 
     except Exception as e:
