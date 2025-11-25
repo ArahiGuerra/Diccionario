@@ -21,3 +21,17 @@ Con la API pública ya ejecutándose, abre manualmente el archivo:
 ``` cliente.html ```
 
 La interfaz cliente se reemplazará por descríbeme.
+
+4. Comunicación con GECO
+
+Se requiere descargar 
+
+``` geco3_client ```
+
+(https://github.com/GIL-UNAM/geco3_client)
+
+También se requiere crear el archivo 
+
+``` config.json ```
+
+(ver ejemplo config.json.example)

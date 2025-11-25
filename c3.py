@@ -21,14 +21,53 @@ from collections import defaultdict, Counter
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from geco3_client.client import GECO3Client
 
 # --------------------------------------------
-# CONFIGURACIÓN BASE
+# CONFIGURACIÓN BASE (desde variables de entorno o config.json)
 # --------------------------------------------
-BASE_URL = "http://www.geco.unam.mx/geco3/proyectos/apidocs/corpus/"
-headers = {
-    "authorization": "Token b882293a53d01d42cdb4f06c80f56c96e70fffef"
-}
+def load_config():
+    """
+    Carga configuración desde variables de entorno o archivo config.json
+    Orden de prioridad: Variables de entorno > config.json > valores por defecto
+    """
+    config = {}
+
+    # Intentar cargar desde archivo config.json
+    if os.path.exists("config.json"):
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception as e:
+            print(f"Advertencia: No se pudo cargar config.json: {e}")
+
+    # Variables de entorno tienen prioridad
+    config["base_url"] = os.getenv("GECO_BASE_URL", config.get("base_url", "http://www.geco.unam.mx/geco3/"))
+    config["anon_user"] = os.getenv("GECO_ANON_USER", config.get("anon_user", None))
+    config["anon_pass"] = os.getenv("GECO_ANON_PASS", config.get("anon_pass", None))
+    config["app_name"] = os.getenv("GECO_APP_NAME", config.get("app_name", None))
+    config["app_password"] = os.getenv("GECO_APP_PASSWORD", config.get("app_password", None))
+    config["user_token"] = os.getenv("GECO_USER_TOKEN", config.get("user_token", None))
+
+    return config
+
+# Cargar configuración
+CONFIG = load_config()
+
+# Inicializar cliente GECO3
+client = GECO3Client(
+    host=CONFIG["base_url"],
+    anon_user=CONFIG["anon_user"],
+    anon_pass=CONFIG["anon_pass"],
+    app_name=CONFIG["app_name"],
+    app_password=CONFIG["app_password"]
+)
+
+# Si hay un token de usuario configurado, hacer login con él
+if CONFIG.get("user_token"):
+    client.login(token=CONFIG["user_token"])
+else:
+    client.login()
 
 # Directorios de trabajo
 TEXTS_DIR = "data/textos"
@@ -438,10 +477,13 @@ class ReverseDict:
 
 
 def listar_corpus():
-    """Lista los corpus disponibles desde la API."""
-    r = requests.get(BASE_URL, headers=headers)
-    r.raise_for_status()
-    corpus_list = r.json()["data"]["proyectos"]
+    """Lista los corpus disponibles desde la API usando GECO3Client."""
+    # Si hay app token, usar corpus de la app; si no, usar corpus públicos
+    if client.is_app_logged():
+        corpus_list = client.corpus_app()
+    else:
+        corpus_list = client.corpus_publicos()
+
     print("\nCorpus disponibles:\n")
     for i, c in enumerate(corpus_list, 1):
         print(f"{i}. {c['nombre']} (ID: {c['id']})")
@@ -455,10 +497,8 @@ def elegir_corpus(corpus_list):
 
 
 def listar_documentos(corpus_id):
-    """Lista documentos dentro de un corpus."""
-    r = requests.get(BASE_URL + str(corpus_id), headers=headers)
-    r.raise_for_status()
-    documentos = r.json()["data"]
+    """Lista documentos dentro de un corpus usando GECO3Client."""
+    documentos = client.docs_corpus(corpus_id)
     print("\nDocumentos disponibles:\n")
     for i, d in enumerate(documentos, 1):
         print(f"{i}. {d['archivo']} (ID: {d['id']})")
@@ -473,12 +513,8 @@ def elegir_documentos(documentos):
 
 
 def descargar_documento(corpus_id, doc_id):
-    """Descarga un documento específico por ID."""
-    url = f"{BASE_URL}{corpus_id}/{doc_id}"
-    r = requests.get(url, headers=headers)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("data", "")
+    """Descarga un documento específico por ID usando GECO3Client."""
+    return client.doc_content(corpus_id, doc_id)
 
 
 # =====================================
@@ -486,58 +522,54 @@ def descargar_documento(corpus_id, doc_id):
 # =====================================
 def filtrar_documentos_por_metadatos(corpus_id):
     """
-    Descarga los metadatos del corpus (endpoint /tabla)
+    Descarga los metadatos del corpus usando GECO3Client.docs_tabla()
     y permite filtrar los documentos por un valor de metadato.
     """
-    url = f"{BASE_URL}{corpus_id}/tabla"
     try:
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        data = r.json()["data"]
+        # Obtener documentos con metadatos usando GECO3Client
+        docs = client.docs_tabla(corpus_id)
     except Exception as e:
         print(f"Error al obtener metadatos del corpus: {e}")
         return []
 
-    metadatos = data.get("metadatos", [])
-    tabla = data.get("tabla", [])
+    if not docs:
+        print("No hay documentos disponibles en este corpus.\n")
+        return []
 
-    # Crear índice de metadatos y valores posibles
-    meta_dict = {}
-    for m in metadatos:
-        meta_id, meta_nombre, valores = m
-        meta_dict[meta_id] = {"nombre": meta_nombre, "valores": set(valores)}
+    # Obtener todos los nombres de metadatos disponibles
+    metadatos_disponibles = set()
+    for doc in docs:
+        metadatos_disponibles.update(doc.get("metadata", {}).keys())
 
-    if not meta_dict:
+    if not metadatos_disponibles:
         print("No hay metadatos disponibles para este corpus.\n")
-        return [{"id": t[0], "archivo": t[1]} for t in tabla]
+        return [{"id": doc["id"], "archivo": doc["name"]} for doc in docs]
 
-    # Mostrar tipos de metadatos
+    # Mostrar metadatos disponibles
+    metadatos_lista = sorted(metadatos_disponibles)
     print("\nMetadatos disponibles para filtrar:")
-    for i, m in enumerate(meta_dict.values(), 1):
-        print(f"{i}. {m['nombre']}")
+    for i, meta_nombre in enumerate(metadatos_lista, 1):
+        print(f"{i}. {meta_nombre}")
 
     opcion = input("\n¿Deseas filtrar por algún metadato? (s/n): ").lower()
     if opcion != "s":
         print("No se aplicará ningún filtro.\n")
-        # Convertimos 'tabla' a lista de diccionarios (id, archivo)
-        return [{"id": t[0], "archivo": t[1]} for t in tabla]
+        return [{"id": doc["id"], "archivo": doc["name"]} for doc in docs]
 
     # Elegir metadato
     idx = int(input("\nSelecciona el número del metadato para filtrar: ")) - 1
-    meta_id = list(meta_dict.keys())[idx]
-    meta_nombre = meta_dict[meta_id]["nombre"]
+    meta_nombre = metadatos_lista[idx]
 
-    # Obtener todos los valores disponibles de ese metadato
+    # Obtener todos los valores disponibles para ese metadato
     valores_disponibles = set()
-    for doc in tabla:
-        for mid, valor in doc[2]:
-            if mid == meta_id:
-                valores_disponibles.add(valor)
+    for doc in docs:
+        valor = doc.get("metadata", {}).get(meta_nombre)
+        if valor is not None:
+            valores_disponibles.add(valor)
     valores_disponibles = sorted(valores_disponibles)
 
     if not valores_disponibles:
-        print(
-            f"No hay valores registrados para el metadato '{meta_nombre}'.")
+        print(f"No hay valores registrados para el metadato '{meta_nombre}'.")
         return []
 
     print(f"\nValores disponibles para '{meta_nombre}':")
@@ -546,17 +578,13 @@ def filtrar_documentos_por_metadatos(corpus_id):
 
     vidx = int(input(f"\nElige un valor para '{meta_nombre}': ")) - 1
     valor_elegido = valores_disponibles[vidx]
-    print(
-        f"\nFiltrando documentos donde '{meta_nombre}' = '{valor_elegido}'...\n")
+    print(f"\nFiltrando documentos donde '{meta_nombre}' = '{valor_elegido}'...\n")
 
     # Filtrar los documentos
     documentos_filtrados = []
-    for doc in tabla:
-        doc_id, archivo, metas = doc
-        for mid, valor in metas:
-            if mid == meta_id and valor == valor_elegido:
-                documentos_filtrados.append({"id": doc_id, "archivo": archivo})
-                break
+    for doc in docs:
+        if doc.get("metadata", {}).get(meta_nombre) == valor_elegido:
+            documentos_filtrados.append({"id": doc["id"], "archivo": doc["name"]})
 
     if not documentos_filtrados:
         print("No se encontraron documentos con ese filtro.\n")
@@ -573,34 +601,21 @@ def filtrar_documentos_por_metadatos_api(corpus_id, meta_nombre, valor):
     """
     Versión no interactiva para Flask.
     Devuelve lista de documentos que cumplen el filtro (sin pedir input()).
+    Usa GECO3Client.docs_tabla() para obtener datos.
     """
-    import requests
-
-    url = f"{BASE_URL}{corpus_id}/tabla"
-    r = requests.get(url, headers=headers)
-    r.raise_for_status()
-    data = r.json().get("data", {})
-
-    metadatos = data.get("metadatos", [])
-    tabla = data.get("tabla", [])
-
-    # Buscar ID del metadato según su nombre
-    meta_id = None
-    for m in metadatos:
-        if m[1].strip().lower() == meta_nombre.strip().lower():
-            meta_id = m[0]
-            break
-    if meta_id is None:
+    try:
+        # Obtener documentos con metadatos usando GECO3Client
+        docs = client.docs_tabla(corpus_id)
+    except Exception as e:
+        print(f"Error al obtener documentos: {e}")
         return []
 
-    # Filtrar los documentos por valor
+    # Filtrar documentos por metadato y valor
     documentos_filtrados = []
-    for doc in tabla:
-        doc_id, archivo, metas = doc
-        for mid, val in metas:
-            if mid == meta_id and val.strip().lower() == valor.strip().lower():
-                documentos_filtrados.append({"id": doc_id, "archivo": archivo})
-                break
+    for doc in docs:
+        doc_valor = doc.get("metadata", {}).get(meta_nombre)
+        if doc_valor and doc_valor.strip().lower() == valor.strip().lower():
+            documentos_filtrados.append({"id": doc["id"], "archivo": doc["name"]})
 
     return documentos_filtrados
 
@@ -616,41 +631,29 @@ def filtrar_documentos_por_varios_metadatos_api(corpus_id, metas, valores):
         metas = ["Área", "Lengua"]
         valores = ["Medicina", "Español"]
     Devuelve una lista de documentos (diccionarios con id y archivo).
+    Usa GECO3Client.docs_tabla() para obtener datos.
     """
-    import requests
-    from c3 import BASE_URL, headers
+    try:
+        # Obtener documentos con metadatos usando GECO3Client
+        docs = client.docs_tabla(corpus_id)
+    except Exception as e:
+        print(f"Error al obtener documentos: {e}")
+        return []
 
-    url = f"{BASE_URL}{corpus_id}/tabla"
-    r = requests.get(url, headers=headers)
-    r.raise_for_status()
-    data = r.json().get("data", {})
+    # Crear lista de filtros (nombre_metadato, valor_esperado)
+    filtros = list(zip(metas, valores))
 
-    tabla = data.get("tabla", [])
-    metadatos = data.get("metadatos", [])
-
-    # Crear mapa de id_metadato → nombre_metadato
-    id_to_nombre = {m[0]: m[1] for m in metadatos}
-
-    # Crear mapa inverso: nombre_metadato → id_metadato
-    nombre_to_id = {m[1]: m[0] for m in metadatos}
-
-    # Convertir nombres a IDs (ignorando los que no existan)
-    filtros = []
-    for meta, valor in zip(metas, valores):
-        mid = nombre_to_id.get(meta)
-        if mid:
-            filtros.append((mid, valor))
-
+    # Filtrar documentos que cumplan TODOS los criterios
     documentos_filtrados = []
-    for doc in tabla:
-        doc_id, archivo, metas_doc = doc
-        # Crear dict rápido de {meta_id: valor}
-        metas_dict = {m[0]: m[1] for m in metas_doc}
-        # Comprobar que todos los pares meta=valor coinciden
-        cumple_todos = all(metas_dict.get(
-            mid) == valor for mid, valor in filtros)
+    for doc in docs:
+        metadata = doc.get("metadata", {})
+        # Verificar que todos los pares (metadato, valor) coincidan
+        cumple_todos = all(
+            metadata.get(meta_nombre) == valor
+            for meta_nombre, valor in filtros
+        )
         if cumple_todos:
-            documentos_filtrados.append({"id": doc_id, "archivo": archivo})
+            documentos_filtrados.append({"id": doc["id"], "archivo": doc["name"]})
 
     return documentos_filtrados
 
