@@ -10,6 +10,12 @@ document.addEventListener("DOMContentLoaded", function () {
   const searchBtn = document.getElementById("searchBtn");
   const resultsList = document.getElementById("resultsList");
 
+  // Prejio de la URL (ej. dicinv)
+  let locationPathName = location.pathname;
+  if(locationPathName == "/"){
+    locationPathName = "";
+  }
+
   // Elementos del selector de diccionarios
   const diccionarioSelect = document.getElementById("diccionarioSelect");
   const loadDiccionarioBtn = document.getElementById("loadDiccionarioBtn");
@@ -24,7 +30,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ======================
   // CARGAR CORPUS
   // ======================
-  fetch("/api/corpora")
+  fetch(locationPathName + "/api/corpora")
     .then(r => r.json())
     .then(res => {
       if (res.ok) {
@@ -53,7 +59,7 @@ document.addEventListener("DOMContentLoaded", function () {
   function loadDocuments(corpusId) {
     documentsContainer.innerHTML = "<p class='text-muted'>Cargando documentos...</p>";
 
-    fetch(`/api/metadatos/${corpusId}`)
+    fetch(locationPathName + `/api/metadatos/${corpusId}`)
       .then(r => r.json())
       .then(metaRes => {
         lastMetaRes = metaRes;
@@ -94,7 +100,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Si no hay documentos filtrados, carga todos
     if (!filteredDocs) {
-      fetch(`/api/documentos/${corpusId}`)
+      fetch(locationPathName + `/api/documentos/${corpusId}`)
         .then(r => r.json())
         .then(res => {
           if (res.ok) showDocuments(res.data, corpusId, metaPanel);
@@ -165,7 +171,7 @@ document.addEventListener("DOMContentLoaded", function () {
       });
 
       fetch(
-        `/api/documentos/${corpusId}?meta=${encodeURIComponent(metas.join(","))}&valor=${encodeURIComponent(
+        locationPathName + `/api/documentos/${corpusId}?meta=${encodeURIComponent(metas.join(","))}&valor=${encodeURIComponent(
           valores.join(",")
         )}`
       )
@@ -200,7 +206,7 @@ document.addEventListener("DOMContentLoaded", function () {
     statusBox.innerText = "Procesando corpus...";
     processBtn.disabled = true;
 
-    fetch("/api/process", {
+    fetch(locationPathName + "/api/process", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ corpus_id: selectedCorpus.id, doc_ids: checked, dic_name: dicName })
@@ -232,7 +238,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // DICCIONARIOS GUARDADOS
   // ======================
   async function loadDiccionarios() {
-    const res = await fetch("/api/diccionarios");
+    const res = await fetch(locationPathName + "/api/diccionarios");
     const data = await res.json();
     if (data.ok && data.data.length > 0) {
       diccionarioSelect.innerHTML = data.data.map(d => `<option value="${d.nombre}">${d.nombre}</option>`).join("");
@@ -251,7 +257,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     diccionarioStatus.innerText = "Cargando diccionario...";
-    const res = await fetch("/api/load_diccionario", {
+    const res = await fetch(locationPathName + "/api/load_diccionario", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nombre })
@@ -285,7 +291,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     resultsList.innerHTML = "<li>Cargando...</li>";
-    fetch("/api/search", {
+    fetch(locationPathName + "/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ definition: def, top_k: 15, diccionario: currentDiccionario })
