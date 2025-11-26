@@ -8,3 +8,4 @@ scikit-learn
 numpy
 node2vec
 text2graphapi
+flask_cors

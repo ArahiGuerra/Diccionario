@@ -16,7 +16,19 @@ from c3 import (
     cargar_diccionario,
 )
 
-app = Flask(__name__, static_folder="static", template_folder="templates")
+url_prefix = ''
+with open('config.json', 'r') as f:
+    config = json.load(f)
+    url_prefix = config.get('url_prefix', '')
+
+if url_prefix:
+    static_url_path = '/' + url_prefix + '/static'
+else:
+    static_url_path = '/static'
+
+app = Flask(__name__, static_folder="static", static_url_path=static_url_path, template_folder="templates")
+if url_prefix:
+    app.config['APPLICATION_ROOT'] = url_prefix + '/'
 
 state = {
     "status": "idle",
