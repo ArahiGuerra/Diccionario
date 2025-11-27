@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let lastMetaRes = null; // metadatos cargados
   let lastFilterSelection = {}; // { "Área": "Medicina", "Tipo": "Wikipedia" }
 
-  // ⭐ Colección GLOBAL de documentos seleccionados (se conserva entre filtros)
+  // Colección GLOBAL de documentos seleccionados (se conserva entre filtros)
   let globalSelectedDocs = new Set();
 
   // ======================
