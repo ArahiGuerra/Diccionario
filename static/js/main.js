@@ -10,13 +10,10 @@ document.addEventListener("DOMContentLoaded", function () {
   const searchBtn = document.getElementById("searchBtn");
   const resultsList = document.getElementById("resultsList");
 
-  // Prejio de la URL (ej. dicinv)
+  // Prefijo URL (para hosting en subcarpeta)
   let locationPathName = location.pathname;
-  if(locationPathName == "/"){
-    locationPathName = "";
-  }
+  if (locationPathName === "/") locationPathName = "";
 
-  // Elementos del selector de diccionarios
   const diccionarioSelect = document.getElementById("diccionarioSelect");
   const loadDiccionarioBtn = document.getElementById("loadDiccionarioBtn");
   const diccionarioStatus = document.getElementById("diccionarioStatus");
@@ -24,8 +21,12 @@ document.addEventListener("DOMContentLoaded", function () {
   let selectedCorpus = null;
   let currentDocuments = [];
   let currentDiccionario = null;
-  let lastMetaRes = null; // Guardar metadatos cargados
-  let lastFilterSelection = {}; // Guardar selecciones actuales
+
+  let lastMetaRes = null; // metadatos cargados
+  let lastFilterSelection = {}; // { "Área": "Medicina", "Tipo": "Wikipedia" }
+
+  // ⭐ Colección GLOBAL de documentos seleccionados (se conserva entre filtros)
+  let globalSelectedDocs = new Set();
 
   // ======================
   // CARGAR CORPUS
@@ -39,25 +40,37 @@ document.addEventListener("DOMContentLoaded", function () {
           li.className = "list-group-item";
           li.innerText = c.nombre;
           li.dataset.id = c.id;
+
           li.addEventListener("click", function () {
-            document.querySelectorAll("#corpusList .list-group-item").forEach(x => x.classList.remove("active"));
+            document.querySelectorAll("#corpusList .list-group-item").forEach(x =>
+              x.classList.remove("active")
+            );
             this.classList.add("active");
+
             selectedCorpus = { id: c.id, nombre: c.nombre };
             selectedCorpusInput.value = c.nombre;
+
+            // Reiniciamos selección global al cambiar de corpus
+            globalSelectedDocs.clear();
+            lastFilterSelection = {};
+
             loadDocuments(c.id);
           });
+
           corpusListEl.appendChild(li);
         });
       } else {
-        corpusListEl.innerHTML = "<li class='list-group-item text-danger'>Error cargando corpora</li>";
+        corpusListEl.innerHTML =
+          "<li class='list-group-item text-danger'>Error cargando corpora</li>";
       }
     });
 
   // ======================
-  // CARGAR DOCUMENTOS + METADATOS (con múltiples filtros)
+  // CARGAR DOCUMENTOS + METADATOS
   // ======================
   function loadDocuments(corpusId) {
-    documentsContainer.innerHTML = "<p class='text-muted'>Cargando documentos...</p>";
+    documentsContainer.innerHTML =
+      "<p class='text-muted'>Cargando documentos...</p>";
 
     fetch(locationPathName + `/api/metadatos/${corpusId}`)
       .then(r => r.json())
@@ -68,139 +81,189 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function renderDocuments(corpusId, metaRes, filteredDocs = null) {
-    // Panel de metadatos persistente
     let metaPanel = "";
-    if (metaRes.ok && metaRes.data.length > 0) {
+
+    if (metaRes.ok) {
       metaPanel = `
       <div class="mb-2 p-2 border rounded bg-light">
-        <label class="form-label small mb-1"> Metadatos disponibles para el corpus:</label>
+        <label class="form-label small mb-1"><b>Filtrar por metadatos:</b></label>
+
         <div id="multiMetaPanel" class="mb-2">
           ${metaRes.data
-          .map(
-            (m, i) => `
+            .map((m, i) => {
+              const selectedVal = lastFilterSelection[m.nombre] || "";
+              return `
             <div class="input-group input-group-sm mb-2">
               <span class="input-group-text">${m.nombre}</span>
+
               <select id="valor_${i}" class="form-select" data-meta="${m.nombre}">
                 <option value="">--Cualquiera--</option>
                 ${m.valores
-                .map(
-                  v =>
-                    `<option value="${v}" ${lastFilterSelection[m.nombre] === v ? "selected" : ""
-                    }>${v}</option>`
-                )
-                .join("")}
+                  .map(
+                    v =>
+                      `<option value="${v}" ${
+                        selectedVal === v ? "selected" : ""
+                      }>${v}</option>`
+                  )
+                  .join("")}
               </select>
-            </div>
-          `
-          )
-          .join("")}
+            </div>`;
+            })
+            .join("")}
         </div>
       </div>`;
     }
 
-    // Si no hay documentos filtrados, carga todos
     if (!filteredDocs) {
       fetch(locationPathName + `/api/documentos/${corpusId}`)
         .then(r => r.json())
         .then(res => {
           if (res.ok) showDocuments(res.data, corpusId, metaPanel);
-          else documentsContainer.innerHTML = `<p class='text-danger'>${res.error}</p>`;
+          else
+            documentsContainer.innerHTML = `<p class="text-danger">${res.error}</p>`;
         });
     } else {
       showDocuments(filteredDocs, corpusId, metaPanel);
     }
   }
 
+  // ======================
+  // MOSTRAR DOCUMENTOS
+  // ======================
   function showDocuments(docs, corpusId, metaPanel) {
     currentDocuments = docs;
+
+    let html = metaPanel;
+
     if (docs.length === 0) {
-      documentsContainer.innerHTML = metaPanel + "<p class='text-muted'>No hay documentos.</p>";
+      documentsContainer.innerHTML =
+        metaPanel + "<p class='text-muted'>No hay documentos.</p>";
       return;
     }
 
-    const form = document.createElement("div");
-    form.innerHTML =
-      metaPanel +
-      `
+    html += `
     <div class='mb-2'>
-      <button id='selectAllDocs' class='btn btn-sm btn-outline-secondary'>Seleccionar todo</button>
-      <button id='clearAllDocs' class='btn btn-sm btn-outline-secondary'>Limpiar</button>
+      <button id='selectAllDocs' class='btn btn-sm btn-outline-secondary'>Seleccionar visibles</button>
+      <button id='clearAllDocs' class='btn btn-sm btn-outline-secondary'>Deseleccionar visibles</button>
     </div>`;
+
+    const container = document.createElement("div");
+    container.innerHTML = html;
+
     const list = document.createElement("div");
 
     docs.forEach(doc => {
       const fila = document.createElement("div");
       fila.className = "form-check";
-      fila.innerHTML = `<input class="form-check-input doc-check" type="checkbox" value="${doc.id}" id="doc_${doc.id}">
-                      <label class="form-check-label" for="doc_${doc.id}">${doc.archivo}</label>`;
+
+      const checked = globalSelectedDocs.has(doc.id) ? "checked" : "";
+
+      fila.innerHTML = `
+      <input class="form-check-input doc-check" type="checkbox" value="${doc.id}" id="doc_${doc.id}" ${checked}>
+      <label class="form-check-label" for="doc_${doc.id}">${doc.archivo}</label>
+    `;
+
       list.appendChild(fila);
     });
 
-    form.appendChild(list);
+    container.appendChild(list);
     documentsContainer.innerHTML = "";
-    documentsContainer.appendChild(form);
+    documentsContainer.appendChild(container);
 
+    // Marcar / desmarcar visibles
     document.getElementById("selectAllDocs").addEventListener("click", () => {
-      document.querySelectorAll(".doc-check").forEach(cb => (cb.checked = true));
+      document.querySelectorAll(".doc-check").forEach(cb => {
+        cb.checked = true;
+        globalSelectedDocs.add(parseInt(cb.value));
+      });
     });
+
     document.getElementById("clearAllDocs").addEventListener("click", () => {
-      document.querySelectorAll(".doc-check").forEach(cb => (cb.checked = false));
+      document.querySelectorAll(".doc-check").forEach(cb => {
+        cb.checked = false;
+        globalSelectedDocs.delete(parseInt(cb.value));
+      });
     });
+
+    // Mantener selección global
+    document
+      .querySelectorAll(".doc-check")
+      .forEach(cb => cb.addEventListener("change", e => {
+        const id = parseInt(cb.value);
+        if (cb.checked) globalSelectedDocs.add(id);
+        else globalSelectedDocs.delete(id);
+      }));
   }
 
-  // ======================
-  // AUTO-APLICAR FILTRO AL CAMBIAR UN VALOR
-  // ======================
+  // =====================================================
+  // AUTO-APLICAR FILTROS AL CAMBIAR METADATOS
+  // =====================================================
   documentsContainer.addEventListener("change", e => {
-    if (e.target && e.target.matches("#multiMetaPanel select")) {
-      const corpusId = selectedCorpus?.id;
-      if (!corpusId) return;
+    if (!e.target.matches("#multiMetaPanel select")) return;
 
-      // Recolectar todos los valores seleccionados
-      const selects = documentsContainer.querySelectorAll("#multiMetaPanel select");
-      const metas = [];
-      const valores = [];
-      lastFilterSelection = {};
+    const corpusId = selectedCorpus?.id;
+    if (!corpusId) return;
 
-      selects.forEach(sel => {
-        if (sel.value && sel.dataset.meta) {
-          metas.push(sel.dataset.meta);
-          valores.push(sel.value);
-          lastFilterSelection[sel.dataset.meta] = sel.value;
+    const selects = document.querySelectorAll("#multiMetaPanel select");
+
+    const metas = [];
+    const valores = [];
+
+    lastFilterSelection = {};
+
+    selects.forEach(sel => {
+      if (sel.value) {
+        metas.push(sel.dataset.meta);
+        valores.push(sel.value);
+        lastFilterSelection[sel.dataset.meta] = sel.value;
+      }
+    });
+
+    if (metas.length === 0) {
+      loadDocuments(corpusId);
+      return;
+    }
+
+    documentsContainer.innerHTML =
+      "<p class='text-muted'>Aplicando filtros...</p>";
+
+    fetch(
+      locationPathName +
+        `/api/documentos/${corpusId}?meta=${encodeURIComponent(
+          metas.join(",")
+        )}&valor=${encodeURIComponent(valores.join(","))}`
+    )
+      .then(r => r.json())
+      .then(fres => {
+        if (fres.ok) {
+          renderDocuments(corpusId, lastMetaRes, fres.data);
+        } else {
+          documentsContainer.innerHTML =
+            `<p class='text-danger'>${fres.error}</p>`;
         }
       });
-
-      fetch(
-        locationPathName + `/api/documentos/${corpusId}?meta=${encodeURIComponent(metas.join(","))}&valor=${encodeURIComponent(
-          valores.join(",")
-        )}`
-      )
-        .then(r => r.json())
-        .then(fres => {
-          if (fres.ok) {
-            renderDocuments(corpusId, lastMetaRes, fres.data);
-          } else {
-            documentsContainer.innerHTML = `<p class='text-danger'>${fres.error}</p>`;
-          }
-        });
-    }
   });
 
   // ======================
-  // PROCESAR Y GUARDAR DICCIONARIO
+  // PROCESAR DICCIONARIO
   // ======================
   processBtn.addEventListener("click", function () {
     if (!selectedCorpus) {
       alert("Selecciona primero un corpus.");
       return;
     }
-    const checked = Array.from(document.querySelectorAll(".doc-check:checked")).map(cb => parseInt(cb.value));
-    if (checked.length === 0) {
+
+    if (globalSelectedDocs.size === 0) {
       alert("Selecciona al menos un documento.");
       return;
     }
 
-    const dicName = prompt("Introduce un nombre para este diccionario:", "NuevoDiccionario");
+    const checked = Array.from(globalSelectedDocs);
+
+    const dicName = prompt(
+      "Introduce un nombre para este diccionario:",
+      "NuevoDiccionario"
+    );
     if (!dicName) return;
 
     statusBox.innerText = "Procesando corpus...";
@@ -209,23 +272,32 @@ document.addEventListener("DOMContentLoaded", function () {
     fetch(locationPathName + "/api/process", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ corpus_id: selectedCorpus.id, doc_ids: checked, dic_name: dicName })
+      body: JSON.stringify({
+        corpus_id: selectedCorpus.id,
+        doc_ids: checked,
+        dic_name: dicName
+      })
     })
       .then(r => r.json())
       .then(res => {
         processBtn.disabled = false;
+
         if (res.ok) {
-          statusBox.innerText = " " + res.message;
+          statusBox.innerText = res.message;
           const nodes = res.graph.nodes.length;
           const edges = res.graph.edges.length;
+
           graphSummary.innerHTML = `<strong>Nodos:</strong> ${nodes} — <strong>Aristas:</strong> ${edges}`;
           renderGraphPreview(res.graph);
+
           currentDiccionario = dicName;
-          diccionarioStatus.innerText = `Diccionario activo: ${dicName}`;
+          diccionarioStatus.innerText =
+            `Diccionario activo: ${dicName}`;
+
           alert("Diccionario guardado correctamente.");
           document.querySelector("#tab2-tab").click();
         } else {
-          statusBox.innerText = "Error: " + (res.error || "error desconocido");
+          statusBox.innerText = "Error: " + res.error;
         }
       })
       .catch(err => {
@@ -235,15 +307,20 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // ======================
-  // DICCIONARIOS GUARDADOS
+  // RESTO DEL CÓDIGO (diccionarios, búsqueda, vista de grafo)
   // ======================
+
   async function loadDiccionarios() {
     const res = await fetch(locationPathName + "/api/diccionarios");
     const data = await res.json();
+
     if (data.ok && data.data.length > 0) {
-      diccionarioSelect.innerHTML = data.data.map(d => `<option value="${d.nombre}">${d.nombre}</option>`).join("");
+      diccionarioSelect.innerHTML = data.data
+        .map(d => `<option value="${d.nombre}">${d.nombre}</option>`)
+        .join("");
     } else {
-      diccionarioSelect.innerHTML = "<option value=''>No hay diccionarios guardados</option>";
+      diccionarioSelect.innerHTML =
+        "<option value=''>No hay diccionarios guardados</option>";
     }
   }
 
@@ -256,18 +333,23 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
-    diccionarioStatus.innerText = "Cargando diccionario...";
+    diccionarioStatus.innerText = "Cargando...";
+
     const res = await fetch(locationPathName + "/api/load_diccionario", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nombre })
     });
+
     const data = await res.json();
+
     if (data.ok) {
-      diccionarioStatus.innerText = "" + data.message;
+      diccionarioStatus.innerText = data.message;
+
       currentDiccionario = nombre;
       const nodes = data.graph.nodes.length;
       const edges = data.graph.edges.length;
+
       graphSummary.innerHTML = `<strong>Nodos:</strong> ${nodes} — <strong>Aristas:</strong> ${edges}`;
       renderGraphPreview(data.graph);
     } else {
@@ -275,9 +357,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // ======================
-  // BÚSQUEDA POR DEFINICIÓN
-  // ======================
   searchBtn.addEventListener("click", function () {
     const def = definitionInput.value.trim();
     if (!def) {
@@ -286,15 +365,20 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     if (!currentDiccionario) {
-      alert("Selecciona o carga un diccionario antes de buscar.");
+      alert("Selecciona o carga un diccionario.");
       return;
     }
 
     resultsList.innerHTML = "<li>Cargando...</li>";
+
     fetch(locationPathName + "/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ definition: def, top_k: 15, diccionario: currentDiccionario })
+      body: JSON.stringify({
+        definition: def,
+        top_k: 15,
+        diccionario: currentDiccionario
+      })
     })
       .then(r => r.json())
       .then(res => {
@@ -302,43 +386,40 @@ document.addEventListener("DOMContentLoaded", function () {
           resultsList.innerHTML = "";
           res.results.forEach(r => {
             const li = document.createElement("li");
-            li.innerText = `${r.palabra}  (score: ${r.score.toFixed(4)})`;
+            li.innerText =
+              `${r.palabra} (score: ${r.score.toFixed(4)})`;
             resultsList.appendChild(li);
           });
         } else {
-          resultsList.innerHTML = `<li class='text-danger'>${res.error}</li>`;
+          resultsList.innerHTML =
+            `<li class="text-danger">${res.error}</li>`;
         }
-      })
-      .catch(err => {
-        resultsList.innerHTML = `<li class='text-danger'>${err}</li>`;
       });
   });
 
-  // ======================
-  // VISTA DE GRAFO
-  // ======================
   function renderGraphPreview(graphJson) {
     graphView.innerHTML = "";
-    const nNodes = graphJson.nodes.length;
-    const nEdges = graphJson.edges.length;
+
     const summary = document.createElement("div");
-    summary.innerHTML = `<p><strong>Nodos (muestra):</strong> ${nNodes}</p><p><strong>Aristas:</strong> ${nEdges}</p>`;
+    summary.innerHTML = `
+      <p><strong>Nodos (muestra):</strong> ${graphJson.nodes.length}</p>
+      <p><strong>Aristas (muestra):</strong> ${graphJson.edges.length}</p>`;
     graphView.appendChild(summary);
 
     const ul = document.createElement("ul");
     ul.style.maxHeight = "300px";
     ul.style.overflow = "auto";
+
     graphJson.nodes.slice(0, 100).forEach(n => {
       const li = document.createElement("li");
-      li.innerText = `${n.id} (f:${n.frequency} d:${n.degree})`;
+      li.innerText =
+        `${n.id} (f:${n.frequency}, d:${n.degree})`;
       ul.appendChild(li);
     });
+
     graphView.appendChild(ul);
   }
 
-  // ======================
-  // RECARGAR DICCIONARIOS AL CAMBIAR A PESTAÑA 2
-  // ======================
   document.getElementById("tab2-tab").addEventListener("click", function () {
     loadDiccionarios();
   });
