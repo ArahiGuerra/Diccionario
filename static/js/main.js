@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let lastMetaRes = null; // metadatos cargados
   let lastFilterSelection = {}; // { "Área": "Medicina", "Tipo": "Wikipedia" }
 
-  // Colección GLOBAL de documentos seleccionados (se conserva entre filtros)
+  //  Colección GLOBAL de documentos seleccionados (se conserva entre filtros)
   let globalSelectedDocs = new Set();
 
   // ======================
@@ -135,6 +135,38 @@ document.addEventListener("DOMContentLoaded", function () {
 
     let html = metaPanel;
 
+    //  Sección de documentos seleccionados
+    if (globalSelectedDocs.size > 0) {
+      // Intentar obtener nombres de todos los documentos seleccionados
+      fetch(locationPathName + `/api/documentos/${corpusId}`)
+        .then(r => r.json())
+        .then(allDocsRes => {
+          if (allDocsRes.ok) {
+            const selectedDocsInfo = Array.from(globalSelectedDocs)
+              .map(id => {
+                const doc = allDocsRes.data.find(d => d.id === id);
+                return doc ? doc.archivo : `ID: ${id}`;
+              })
+              .join(", ");
+            
+            const alertDiv = document.querySelector(".selected-docs-alert");
+            if (alertDiv) {
+              alertDiv.innerHTML = `
+                <strong> Documentos seleccionados (${globalSelectedDocs.size}):</strong>
+                <div class='small mt-1' style='max-height: 100px; overflow-y: auto;'>
+                  ${selectedDocsInfo}
+                </div>`;
+            }
+          }
+        });
+
+      html += `
+      <div class='alert alert-info mb-3 selected-docs-alert'>
+        <strong> Documentos seleccionados (${globalSelectedDocs.size}):</strong>
+        <div class='small mt-1'>Cargando nombres...</div>
+      </div>`;
+    }
+
     if (docs.length === 0) {
       documentsContainer.innerHTML =
         metaPanel + "<p class='text-muted'>No hay documentos.</p>";
@@ -176,6 +208,8 @@ document.addEventListener("DOMContentLoaded", function () {
         cb.checked = true;
         globalSelectedDocs.add(parseInt(cb.value));
       });
+      // Actualizar el contador
+      loadDocuments(corpusId);
     });
 
     document.getElementById("clearAllDocs").addEventListener("click", () => {
@@ -183,6 +217,8 @@ document.addEventListener("DOMContentLoaded", function () {
         cb.checked = false;
         globalSelectedDocs.delete(parseInt(cb.value));
       });
+      // Actualizar el contador
+      loadDocuments(corpusId);
     });
 
     // Mantener selección global
@@ -192,6 +228,31 @@ document.addEventListener("DOMContentLoaded", function () {
         const id = parseInt(cb.value);
         if (cb.checked) globalSelectedDocs.add(id);
         else globalSelectedDocs.delete(id);
+        
+        // Actualizar la visualización del contador
+        const alertDiv = document.querySelector(".selected-docs-alert");
+        if (alertDiv && globalSelectedDocs.size > 0) {
+          fetch(locationPathName + `/api/documentos/${corpusId}`)
+            .then(r => r.json())
+            .then(allDocsRes => {
+              if (allDocsRes.ok) {
+                const selectedDocsInfo = Array.from(globalSelectedDocs)
+                  .map(id => {
+                    const doc = allDocsRes.data.find(d => d.id === id);
+                    return doc ? doc.archivo : `ID: ${id}`;
+                  })
+                  .join(", ");
+                
+                alertDiv.innerHTML = `
+                  <strong> Documentos seleccionados (${globalSelectedDocs.size}):</strong>
+                  <div class='small mt-1' style='max-height: 100px; overflow-y: auto;'>
+                    ${selectedDocsInfo}
+                  </div>`;
+              }
+            });
+        } else if (alertDiv && globalSelectedDocs.size === 0) {
+          alertDiv.remove();
+        }
       }));
   }
 
