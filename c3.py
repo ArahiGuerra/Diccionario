@@ -48,6 +48,7 @@ def load_config():
     config["app_name"] = os.getenv("GECO_APP_NAME", config.get("app_name", None))
     config["app_password"] = os.getenv("GECO_APP_PASSWORD", config.get("app_password", None))
     config["user_token"] = os.getenv("GECO_USER_TOKEN", config.get("user_token", None))
+    config["data_dir"] = os.getenv("DATA_DIR", config.get("data_dir", "data"))
 
     return config
 
@@ -70,9 +71,10 @@ else:
     client.login()
 
 # Directorios de trabajo
-TEXTS_DIR = "data/textos"
-LEMAS_DIR = "data/lemas"
-GRAPH_DIR = "data/grafos"
+DATA_DIR = CONFIG["data_dir"]
+TEXTS_DIR = os.path.join(DATA_DIR, "textos")
+LEMAS_DIR = os.path.join(DATA_DIR, "lemas")
+GRAPH_DIR = os.path.join(DATA_DIR, "grafos")
 os.makedirs(TEXTS_DIR, exist_ok=True)
 os.makedirs(LEMAS_DIR, exist_ok=True)
 os.makedirs(GRAPH_DIR, exist_ok=True)
