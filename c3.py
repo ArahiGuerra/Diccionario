@@ -21,8 +21,7 @@ from collections import defaultdict, Counter
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from geco3_client.client import GECO3Client
-
+from geco3_client import GECO3Client
 # --------------------------------------------
 # CONFIGURACIÓN BASE (desde variables de entorno o config.json)
 # --------------------------------------------
@@ -146,21 +145,49 @@ class TextProcessor:
         return texto
 
     def lematizar_con_spacy(self, texto):
-        """Lematización mejorada con spaCy si está disponible."""
-        if not nlp:
-            return self.lematizar_freeling_mejorado(texto)
-
-        doc = nlp(texto)
+        """
+        Lematización optimizada para textos largos (Chunking).
+        Divide el texto en bloques de 100,000 caracteres para evitar desbordamiento de memoria.
+        """
         tokens_procesados = []
 
-        for token in doc:
-            if not token.is_stop and not token.is_punct and len(token.text) > 2:
-                # Guardar lema con su POS tag para uso posterior
-                tokens_procesados.append({
-                    'lema': token.lemma_.lower(),
-                    'pos': token.pos_,
-                    'texto': token.text.lower()
-                })
+        # 1. Si NO tenemos spaCy, usamos un método manual simple para evitar fallos de API con textos gigantes
+        if not nlp:
+            print("Aviso: SpaCy no está cargado. Usando tokenización simple rápida.")
+            # Tokenización simple (split) para no saturar la API externa de Freeling con 3MB
+            palabras = texto.split()
+            for w in palabras:
+                if len(w) > 2 and w not in STOPWORDS:
+                    tokens_procesados.append({
+                        'lema': w, # Sin spaCy, el lema es la palabra misma
+                        'pos': 'UNK',
+                        'texto': w
+                    })
+            return tokens_procesados
+
+        # 2. Configurar spaCy para permitir textos más largos (por seguridad)
+        nlp.max_length = len(texto) + 50000
+
+        # 3. PROCESAMIENTO POR LOTES (Chunking)
+        # Procesamos de 100,000 en 100,000 caracteres para no saturar la RAM
+        tamano_lote = 100000 
+        
+        print(f"   > Procesando texto extenso ({len(texto)} chars) en bloques de {tamano_lote}...")
+        
+        for i in range(0, len(texto), tamano_lote):
+            # Cortar un pedazo del texto
+            lote = texto[i : i + tamano_lote]
+            
+            # Procesar ese pedazo
+            doc = nlp(lote)
+
+            for token in doc:
+                if not token.is_stop and not token.is_punct and len(token.text) > 2:
+                    tokens_procesados.append({
+                        'lema': token.lemma_.lower(),
+                        'pos': token.pos_,
+                        'texto': token.text.lower()
+                    })
 
         return tokens_procesados
 
