@@ -21,7 +21,7 @@ from collections import defaultdict, Counter
 import spacy
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from geco3_client import GECO3Client
+from geco3_client.client import GECO3Client
 # --------------------------------------------
 # CONFIGURACIÓN BASE (desde variables de entorno o config.json)
 # --------------------------------------------
