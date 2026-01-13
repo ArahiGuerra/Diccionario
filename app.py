@@ -1,4 +1,5 @@
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 import os
 import json
 import secrets
@@ -31,7 +32,19 @@ else:
 
 app = Flask(__name__, static_folder="static", static_url_path=static_url_path, template_folder="templates")
 if url_prefix:
-    app.config['APPLICATION_ROOT'] = url_prefix + '/'
+    app.config['APPLICATION_ROOT'] = '/' + url_prefix
+
+    # Middleware to set SCRIPT_NAME for proper url_for() generation behind proxy
+    class PrefixMiddleware:
+        def __init__(self, app, prefix):
+            self.app = app
+            self.prefix = prefix
+
+        def __call__(self, environ, start_response):
+            environ['SCRIPT_NAME'] = '/' + self.prefix
+            return self.app(environ, start_response)
+
+    app.wsgi_app = PrefixMiddleware(app.wsgi_app, url_prefix)
 
 # Session configuration for GECO SSO authentication
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
