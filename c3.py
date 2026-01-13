@@ -54,20 +54,34 @@ def load_config():
 # Cargar configuración
 CONFIG = load_config()
 
-# Inicializar cliente GECO3
-client = GECO3Client(
-    host=CONFIG["base_url"],
-    anon_user=CONFIG["anon_user"],
-    anon_pass=CONFIG["anon_pass"],
-    app_name=CONFIG["app_name"],
-    app_password=CONFIG["app_password"]
-)
 
-# Si hay un token de usuario configurado, hacer login con él
-if CONFIG.get("user_token"):
-    client.login(token=CONFIG["user_token"])
-else:
-    client.login()
+def get_client(token=None, is_encrypted=True):
+    """
+    Factory function to create an authenticated GECO3 client.
+
+    Args:
+        token: User token from GECO SSO (optional). If None, uses anonymous login.
+        is_encrypted: Whether the token is XOR encrypted (default True for SSO tokens).
+
+    Returns:
+        Authenticated GECO3Client instance.
+    """
+    client = GECO3Client(
+        host=CONFIG["base_url"],
+        anon_user=CONFIG["anon_user"],
+        anon_pass=CONFIG["anon_pass"],
+        app_name=CONFIG["app_name"],
+        app_password=CONFIG["app_password"]
+    )
+
+    try:
+        client.login(token=token, is_token_encrypted=is_encrypted if token else False)
+    except Exception as e:
+        print(f"Token login failed, falling back to anonymous: {e}")
+        client.login()  # Fallback to anonymous
+
+    return client
+
 
 # Directorios de trabajo
 DATA_DIR = CONFIG["data_dir"]
@@ -505,13 +519,33 @@ class ReverseDict:
 # ---------------------------------------------------------------
 
 
-def listar_corpus():
-    """Lista los corpus disponibles desde la API usando GECO3Client."""
+def listar_corpus(client, include_private=False):
+    """
+    Lista los corpus disponibles desde la API usando GECO3Client.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        include_private: If True, also fetches private/collaborative corpora.
+
+    Returns:
+        List of corpus dictionaries.
+    """
     # Si hay app token, usar corpus de la app; si no, usar corpus públicos
     if client.is_app_logged():
         corpus_list = client.corpus_app()
     else:
         corpus_list = client.corpus_publicos()
+
+    # Include private corpora if requested and user is authenticated
+    if include_private:
+        try:
+            private_corpora = client.corpus_privados()
+            existing_ids = {c["id"] for c in corpus_list}
+            for c in private_corpora:
+                if c["id"] not in existing_ids:
+                    corpus_list.append(c)
+        except Exception:
+            pass  # Ignore if private corpora fetch fails
 
     print("\nCorpus disponibles:\n")
     for i, c in enumerate(corpus_list, 1):
@@ -525,8 +559,17 @@ def elegir_corpus(corpus_list):
     return corpus_list[idx - 1]
 
 
-def listar_documentos(corpus_id):
-    """Lista documentos dentro de un corpus usando GECO3Client."""
+def listar_documentos(client, corpus_id):
+    """
+    Lista documentos dentro de un corpus usando GECO3Client.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        corpus_id: ID of the corpus.
+
+    Returns:
+        List of document dictionaries.
+    """
     documentos = client.docs_corpus(corpus_id)
     print("\nDocumentos disponibles:\n")
     for i, d in enumerate(documentos, 1):
@@ -541,18 +584,32 @@ def elegir_documentos(documentos):
     return [documentos[i] for i in indices]
 
 
-def descargar_documento(corpus_id, doc_id):
-    """Descarga un documento específico por ID usando GECO3Client."""
+def descargar_documento(client, corpus_id, doc_id):
+    """
+    Descarga un documento específico por ID usando GECO3Client.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        corpus_id: ID of the corpus.
+        doc_id: ID of the document.
+
+    Returns:
+        Document content as string.
+    """
     return client.doc_content(corpus_id, doc_id)
 
 
 # =====================================
 # NUEVA FUNCIÓN: FILTRAR POR METADATOS
 # =====================================
-def filtrar_documentos_por_metadatos(corpus_id):
+def filtrar_documentos_por_metadatos(client, corpus_id):
     """
     Descarga los metadatos del corpus usando GECO3Client.docs_tabla()
     y permite filtrar los documentos por un valor de metadato.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        corpus_id: ID of the corpus.
     """
     try:
         # Obtener documentos con metadatos usando GECO3Client
@@ -626,11 +683,20 @@ def filtrar_documentos_por_metadatos(corpus_id):
     return documentos_filtrados
 
 
-def filtrar_documentos_por_metadatos_api(corpus_id, meta_nombre, valor):
+def filtrar_documentos_por_metadatos_api(client, corpus_id, meta_nombre, valor):
     """
     Versión no interactiva para Flask.
     Devuelve lista de documentos que cumplen el filtro (sin pedir input()).
     Usa GECO3Client.docs_tabla() para obtener datos.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        corpus_id: ID of the corpus.
+        meta_nombre: Name of the metadata field to filter by.
+        valor: Value to match.
+
+    Returns:
+        List of document dictionaries matching the filter.
     """
     try:
         # Obtener documentos con metadatos usando GECO3Client
@@ -653,7 +719,7 @@ def filtrar_documentos_por_metadatos_api(corpus_id, meta_nombre, valor):
 # =====================================
 
 
-def filtrar_documentos_por_varios_metadatos_api(corpus_id, metas, valores):
+def filtrar_documentos_por_varios_metadatos_api(client, corpus_id, metas, valores):
     """
     Filtra documentos que cumplan simultáneamente varios metadatos y valores.
     Ejemplo:
@@ -661,6 +727,15 @@ def filtrar_documentos_por_varios_metadatos_api(corpus_id, metas, valores):
         valores = ["Medicina", "Español"]
     Devuelve una lista de documentos (diccionarios con id y archivo).
     Usa GECO3Client.docs_tabla() para obtener datos.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        corpus_id: ID of the corpus.
+        metas: List of metadata field names.
+        valores: List of values to match (parallel to metas).
+
+    Returns:
+        List of document dictionaries matching all filters.
     """
     try:
         # Obtener documentos con metadatos usando GECO3Client
@@ -685,6 +760,31 @@ def filtrar_documentos_por_varios_metadatos_api(corpus_id, metas, valores):
             documentos_filtrados.append({"id": doc["id"], "archivo": doc["name"]})
 
     return documentos_filtrados
+
+
+def obtener_metadatos_corpus(client, corpus_id):
+    """
+    Obtiene los metadatos disponibles en un corpus y sus valores únicos.
+
+    Args:
+        client: Authenticated GECO3Client instance.
+        corpus_id: ID of the corpus.
+
+    Returns:
+        Dictionary mapping metadata names to lists of unique values.
+    """
+    docs = client.docs_tabla(corpus_id)
+
+    metadatos = {}
+    for doc in docs:
+        for key, value in doc.get("metadata", {}).items():
+            if key not in metadatos:
+                metadatos[key] = set()
+            if value:
+                metadatos[key].add(value)
+
+    # Convert sets to sorted lists
+    return {k: sorted(list(v)) for k, v in metadatos.items()}
 
 
 # --------------------------------------------
@@ -818,9 +918,6 @@ def evaluar_sistema(diccionario_inverso, pruebas):
 
 
 # --------------------------------------------
-# PROCESAMIENTO PRINCIPAL
-# --------------------------------------------
-# --------------------------------------------
 # PROCESAMIENTO PRINCIPAL (modo terminal)
 # --------------------------------------------
 if __name__ == "__main__":
@@ -828,13 +925,17 @@ if __name__ == "__main__":
     print("        DICCIONARIO INVERSO — MODO TERMINAL")
     print("=" * 60)
 
+    # Create client for terminal mode (uses config token or anonymous)
+    token = CONFIG.get("user_token")
+    client = get_client(token=token, is_encrypted=False)
+
     # Mostrar corpus disponibles
-    corpus_list = listar_corpus()
+    corpus_list = listar_corpus(client)
     corpus = elegir_corpus(corpus_list)
     corpus_id = corpus.get("id")
 
     # Mostrar documentos
-    documentos = filtrar_documentos_por_metadatos(corpus_id)
+    documentos = filtrar_documentos_por_metadatos(client, corpus_id)
     docs_sel = elegir_documentos(documentos)
 
     print("\nDescargando y procesando documentos seleccionados...\n")
@@ -845,7 +946,7 @@ if __name__ == "__main__":
 
     for d in docs_sel:
         try:
-            txt = descargar_documento(corpus_id, d.get("id"))
+            txt = descargar_documento(client, corpus_id, d.get("id"))
             texto_limpio = processor.limpiar_texto_avanzado(txt)
             textos.append(texto_limpio)
             print(f"  ✓ {d['archivo']} procesado.")

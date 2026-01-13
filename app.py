@@ -1,19 +1,22 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 import os
 import json
+import secrets
 import networkx as nx
 from collections import Counter
 from c3 import (
-    listar_corpus,
-    listar_documentos,
-    descargar_documento,
     TextProcessor,
     GraphBuilder,
     ReverseDict,
-    TEXTS_DIR,
-    LEMAS_DIR,
     GRAPH_DIR,
     cargar_diccionario,
+    get_client,
+    listar_corpus,
+    listar_documentos,
+    descargar_documento,
+    filtrar_documentos_por_metadatos_api,
+    filtrar_documentos_por_varios_metadatos_api,
+    obtener_metadatos_corpus,
 )
 
 url_prefix = ''
@@ -29,6 +32,93 @@ else:
 app = Flask(__name__, static_folder="static", static_url_path=static_url_path, template_folder="templates")
 if url_prefix:
     app.config['APPLICATION_ROOT'] = url_prefix + '/'
+
+# Session configuration for GECO SSO authentication
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutes
+
+
+# ============================================
+# AUTHENTICATION HELPER
+# ============================================
+
+def _get_session_token():
+    """Get the user token from session, if available."""
+    if 'geco3user' in session and session['geco3user']:
+        return session['geco3user'].get('token')
+    return None
+
+
+def _get_client():
+    """
+    Factory function to create an authenticated GECO3 client.
+    Uses session token if available, otherwise falls back to anonymous.
+    """
+    token = _get_session_token()
+    return get_client(token=token, is_encrypted=True)
+
+
+# ============================================
+# AUTHENTICATION ENDPOINTS
+# ============================================
+
+@app.route("/auth")
+def auth():
+    """
+    Receive authentication redirect from GECO.
+    GECO redirects here with query parameters:
+    - token: User's session token (XOR encrypted, Base64 encoded)
+    - name: User's display name
+    - corpus: (Optional) Pre-selected corpus ID
+    """
+    token = request.args.get('token')
+    name = request.args.get('name')
+    corpus = request.args.get('corpus')
+
+    # Handle space encoding in URL parameters
+    if token:
+        token = token.replace(" ", "+")
+
+    session['geco3user'] = {
+        'token': token,
+        'name': name,
+        'corpus': corpus
+    }
+    session.permanent = True
+
+    # If corpus is provided, redirect to it; otherwise go to index
+    if corpus:
+        return redirect(url_for('index') + f'?corpus={corpus}')
+
+    return redirect(url_for('index'))
+
+
+@app.route("/logout")
+def logout():
+    """Clear GECO session and redirect to index."""
+    session.pop('geco3user', None)
+    return redirect(url_for('index'))
+
+
+@app.route("/api/auth/status")
+def auth_status():
+    """Return current authentication status."""
+    if 'geco3user' in session and session['geco3user']:
+        user = session['geco3user']
+        return jsonify({
+            "ok": True,
+            "authenticated": True,
+            "name": user.get('name'),
+            "corpus": user.get('corpus')
+        })
+    return jsonify({
+        "ok": True,
+        "authenticated": False,
+        "name": None,
+        "corpus": None
+    })
 
 state = {
     "status": "idle",
@@ -85,7 +175,11 @@ def index():
 @app.route("/api/corpora", methods=["GET"])
 def api_corpora():
     try:
-        corpus_list = listar_corpus()
+        client = _get_client()
+        # Include private corpora if user is authenticated
+        include_private = _get_session_token() is not None
+        corpus_list = listar_corpus(client, include_private=include_private)
+
         simplified = [
             {"id": c["id"], "nombre": c.get("nombre", c.get("titulo", ""))}
             for c in corpus_list
@@ -105,37 +199,29 @@ def api_documentos(corpus_id):
     - Múltiples filtros: /api/documentos/131?meta=Área,Lengua&valor=Medicina,Español
     """
     try:
+        client = _get_client()
         meta_param = request.args.get("meta")
         valor_param = request.args.get("valor")
 
-        # Caso: múltiples filtros separados por coma
+        # Caso: filtros separados por coma
         if meta_param and valor_param:
             metas = [m.strip() for m in meta_param.split(",")]
             valores = [v.strip() for v in valor_param.split(",")]
 
-            # Si hay más de uno, usamos la nueva función
             if len(metas) > 1:
-                from c3 import filtrar_documentos_por_varios_metadatos_api
                 documentos = filtrar_documentos_por_varios_metadatos_api(
-                    corpus_id, metas, valores
+                    client, corpus_id, metas, valores
                 )
-                simplified = [
-                    {"id": d["id"], "archivo": d["archivo"]} for d in documentos
-                ]
-                return jsonify({"ok": True, "data": simplified, "filtered": True})
+            else:
+                documentos = filtrar_documentos_por_metadatos_api(
+                    client, corpus_id, metas[0], valores[0]
+                )
 
-            # Si hay solo uno, usamos la función clásica
-            from c3 import filtrar_documentos_por_metadatos_api
-            documentos = filtrar_documentos_por_metadatos_api(
-                corpus_id, metas[0], valores[0]
-            )
-            simplified = [{"id": d["id"], "archivo": d["archivo"]}
-                          for d in documentos]
+            simplified = [{"id": d["id"], "archivo": d["archivo"]} for d in documentos]
             return jsonify({"ok": True, "data": simplified, "filtered": True})
 
         # Si no se enviaron parámetros, listamos todos los documentos
-        from c3 import listar_documentos
-        documentos = listar_documentos(corpus_id)
+        documentos = listar_documentos(client, corpus_id)
         simplified = [
             {"id": d["id"], "archivo": d.get("archivo", str(d.get("id")))}
             for d in documentos
@@ -160,16 +246,9 @@ def api_metadatos(corpus_id):
     }
     """
     try:
-        from c3 import client
-        docs = client.docs_tabla(corpus_id)
-
-        metadatos = {}
-        for d in docs:
-            for metadato in d["metadata"]:
-                metadatos.setdefault(metadato, set()).add(d["metadata"][metadato])
-
-        resultado = [{"nombre": meta, "valores": sorted(valores)} for meta, valores in metadatos.items()]
-
+        client = _get_client()
+        metadatos = obtener_metadatos_corpus(client, corpus_id)
+        resultado = [{"nombre": meta, "valores": valores} for meta, valores in metadatos.items()]
         return jsonify({"ok": True, "data": resultado})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -189,12 +268,13 @@ def api_process():
         state["status"] = "processing"
         state["message"] = "Procesando documentos..."
 
+        client = _get_client()
         processor = TextProcessor()
         builder = GraphBuilder(processor)
         textos = []
 
         for doc_id in doc_ids:
-            txt = descargar_documento(corpus_id, doc_id)
+            txt = descargar_documento(client, corpus_id, doc_id)
             txt_clean = processor.limpiar_texto_avanzado(txt)
             textos.append(txt_clean)
 
