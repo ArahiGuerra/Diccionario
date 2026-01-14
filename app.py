@@ -50,6 +50,7 @@ if url_prefix:
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_PATH'] = '/'  # Avoid path issues behind reverse proxy
 app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutes
 
 
