@@ -1,4 +1,41 @@
 document.addEventListener("DOMContentLoaded", function () {
+  // ======================
+  // CARGAR ESTADO DE AUTENTICACIÓN
+  // ======================
+  const userDisplay = document.getElementById("userDisplay");
+  const logoutBtn = document.getElementById("logoutBtn");
+
+  // Prefijo URL (para hosting en subcarpeta)
+  let locationPathName = location.pathname;
+  if (locationPathName === "/") locationPathName = "";
+
+  // Session corpus from GECO SSO (will be set if user logged in with a corpus)
+  let sessionCorpusId = null;
+
+  fetch(locationPathName + "/api/auth/status")
+    .then(r => r.json())
+    .then(res => {
+      if (res.ok && res.authenticated) {
+        userDisplay.textContent = res.name || 'Usuario autenticado';
+        logoutBtn.style.display = "inline-block";
+        // Store session corpus for auto-selection
+        if (res.corpus) {
+          sessionCorpusId = parseInt(res.corpus);
+        }
+      } else {
+        userDisplay.textContent = "Usuario Anónimo";
+        logoutBtn.style.display = "none";
+      }
+    })
+    .catch(() => {
+      userDisplay.textContent = "Usuario Anónimo";
+      logoutBtn.style.display = "none";
+    })
+    .finally(() => {
+      // Load corpora after auth status is known
+      loadCorpora();
+    });
+
   const corpusListEl = document.getElementById("corpusList");
   const documentsContainer = document.getElementById("documentsContainer");
   const selectedCorpusInput = document.getElementById("selectedCorpus");
@@ -9,10 +46,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const definitionInput = document.getElementById("definitionInput");
   const searchBtn = document.getElementById("searchBtn");
   const resultsList = document.getElementById("resultsList");
-
-  // Prefijo URL (para hosting en subcarpeta)
-  let locationPathName = location.pathname;
-  if (locationPathName === "/") locationPathName = "";
 
   const diccionarioSelect = document.getElementById("diccionarioSelect");
   const loadDiccionarioBtn = document.getElementById("loadDiccionarioBtn");
@@ -31,39 +64,49 @@ document.addEventListener("DOMContentLoaded", function () {
   // ======================
   // CARGAR CORPUS
   // ======================
-  fetch(locationPathName + "/api/corpora")
-    .then(r => r.json())
-    .then(res => {
-      if (res.ok) {
-        res.data.forEach(c => {
-          const li = document.createElement("li");
-          li.className = "list-group-item";
-          li.innerText = c.nombre;
-          li.dataset.id = c.id;
+  function loadCorpora() {
+    fetch(locationPathName + "/api/corpora")
+      .then(r => r.json())
+      .then(res => {
+        if (res.ok) {
+          res.data.forEach(c => {
+            const li = document.createElement("li");
+            li.className = "list-group-item";
+            li.innerText = c.nombre;
+            li.dataset.id = c.id;
 
-          li.addEventListener("click", function () {
-            document.querySelectorAll("#corpusList .list-group-item").forEach(x =>
-              x.classList.remove("active")
-            );
-            this.classList.add("active");
+            li.addEventListener("click", function () {
+              document.querySelectorAll("#corpusList .list-group-item").forEach(x =>
+                x.classList.remove("active")
+              );
+              this.classList.add("active");
 
-            selectedCorpus = { id: c.id, nombre: c.nombre };
-            selectedCorpusInput.value = c.nombre;
+              selectedCorpus = { id: c.id, nombre: c.nombre };
+              selectedCorpusInput.value = c.nombre;
 
-            // Reiniciamos selección global al cambiar de corpus
-            globalSelectedDocs.clear();
-            lastFilterSelection = {};
+              // Reiniciamos selección global al cambiar de corpus
+              globalSelectedDocs.clear();
+              lastFilterSelection = {};
 
-            loadDocuments(c.id);
+              loadDocuments(c.id);
+            });
+
+            corpusListEl.appendChild(li);
           });
 
-          corpusListEl.appendChild(li);
-        });
-      } else {
-        corpusListEl.innerHTML =
-          "<li class='list-group-item text-danger'>Error cargando corpora</li>";
-      }
-    });
+          // Auto-select corpus if user logged in with one from GECO
+          if (sessionCorpusId) {
+            const matchingItem = corpusListEl.querySelector(`[data-id="${sessionCorpusId}"]`);
+            if (matchingItem) {
+              matchingItem.click();
+            }
+          }
+        } else {
+          corpusListEl.innerHTML =
+            "<li class='list-group-item text-danger'>Error cargando corpora</li>";
+        }
+      });
+  }
 
   // ======================
   // CARGAR DOCUMENTOS + METADATOS

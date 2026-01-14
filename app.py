@@ -197,6 +197,19 @@ def api_corpora():
             {"id": c["id"], "nombre": c.get("nombre", c.get("titulo", ""))}
             for c in corpus_list
         ]
+
+        # If user logged in with a specific corpus, filter to only that corpus
+        session_corpus = None
+        if 'geco3user' in session and session['geco3user']:
+            session_corpus = session['geco3user'].get('corpus')
+
+        if session_corpus:
+            try:
+                session_corpus_id = int(session_corpus)
+                simplified = [c for c in simplified if c["id"] == session_corpus_id]
+            except (ValueError, TypeError):
+                pass
+
         return jsonify({"ok": True, "data": simplified})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
