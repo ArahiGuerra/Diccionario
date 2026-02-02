@@ -18,6 +18,7 @@ from c3 import (
     filtrar_documentos_por_metadatos_api,
     filtrar_documentos_por_varios_metadatos_api,
     obtener_metadatos_corpus,
+    borrar_diccionario,
 )
 
 url_prefix = ''
@@ -309,8 +310,14 @@ def api_process():
         tokens_procesados = processor.lematizar_con_spacy(texto_unido)
         grafo = builder.construir_grafo_mejorado(tokens_procesados)
 
+        # Antes de llamar a guardar, obtenemos el usuario de la sesión
+        user_name = "Anónimo"
+        if 'geco3user' in session and session['geco3user']:
+            user_name = session['geco3user'].get('name', 'Anónimo')
+
         from c3 import guardar_diccionario
         guardar_diccionario(dic_name, grafo, builder)
+        
 
         reverse_dict = ReverseDict(grafo, processor, builder)
 
@@ -402,6 +409,35 @@ def api_search():
         {"palabra": r[0], "score": float(r[1])} for r in resultados]
     return jsonify({"ok": True, "results": resultados_s})
 
+@app.route("/api/delete_diccionario", methods=["POST"])
+def api_delete_diccionario():
+    data = request.get_json()
+    nombre_dic = data.get('nombre')
+    
+    if not nombre_dic:
+        return jsonify({"ok": False, "error": "Nombre requerido"}), 400
+    
+    # Obtener quién está intentando borrar
+    usuario_actual = "Anónimo"
+    if 'geco3user' in session and session['geco3user']:
+        usuario_actual = session['geco3user'].get('name', 'Anónimo')
+
+    # Llamamos a la lógica de c3
+    exito, mensaje = borrar_diccionario(nombre_dic, usuario_actual)
+    
+    if exito:
+        # Si se borró el diccionario que estaba cargado en memoria, limpiamos el estado
+        if state.get("current_diccionario") == nombre_dic:
+             state.update({
+                "current_graph": None,
+                "builder": None,
+                "processor": None,
+                "reverse_dict": None,
+                "current_diccionario": None,
+            })
+        return jsonify({"ok": True, "message": mensaje})
+    else:
+        return jsonify({"ok": False, "error": mensaje}), 403
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

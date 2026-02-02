@@ -461,6 +461,54 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
+  const deleteDiccionarioBtn = document.getElementById("deleteDiccionarioBtn");
+
+  deleteDiccionarioBtn.addEventListener("click", async () => {
+    const nombre = diccionarioSelect.value;
+  
+    
+    // Validación inicial
+    if (!nombre) {
+      alert("Por favor, selecciona un diccionario de la lista para eliminar.");
+      return;
+    }
+
+    // Confirmación de seguridad
+    if (!confirm(`¿Estás seguro de que quieres eliminar el diccionario "${nombre}"?\n\nSi no eres el creador, la acción fallará.`)) {
+        return;
+    }
+
+    deleteDiccionarioBtn.disabled = true;
+
+    try {
+        const res = await fetch(locationPathName + "/api/delete_diccionario", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nombre: nombre })
+        });
+
+        const data = await res.json();
+        
+        if (data.ok) {
+            alert(data.message);
+            loadDiccionarios(); // Recargar la lista visual
+            
+            // Limpiar pantalla si borramos el que estábamos viendo
+            document.getElementById("graphView").innerHTML = ""; 
+            document.getElementById("graphSummary").innerHTML = "Diccionario eliminado.";
+            document.getElementById("diccionarioStatus").innerText = "Ninguno cargado";
+        } else {
+            alert("Error: " + data.error);
+        }
+    } catch (error) {
+        alert("Error de conexión al intentar borrar.");
+    } finally {
+        deleteDiccionarioBtn.disabled = false;
+    }
+  });
+
+
+  
   searchBtn.addEventListener("click", function () {
     const def = definitionInput.value.trim();
     if (!def) {

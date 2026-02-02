@@ -19,6 +19,7 @@ import numpy as np
 from scipy.spatial.distance import cosine
 from collections import defaultdict, Counter
 import spacy
+from spacy.lang.es.stop_words import STOP_WORDS
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from geco3_client.client import GECO3Client
@@ -96,7 +97,7 @@ os.makedirs(GRAPH_DIR, exist_ok=True)
 # CLASES Y FUNCIONES EXISTENTES
 # --------------------------------------------
 
-# (aquí van tus clases TextProcessor, GraphBuilder y ReverseDict)
+# (aquí van las clases TextProcessor, GraphBuilder y ReverseDict)
 # No las cambio, solo las dejamos igual que en tu c3.py original
 
 
@@ -104,14 +105,14 @@ os.makedirs(GRAPH_DIR, exist_ok=True)
 # INICIALIZACIÓN DE MODELOS
 # ---------------------------
 try:
-    nlp = spacy.load("es_core_news_md")
+    nlp = spacy.load("es_core_news_lg")
 except:
     print(" Modelo de spaCy no encontrado. Instala con: python -m spacy download es_core_news_md")
     nlp = None
 
 # Stopwords ampliadas
-STOPWORDS = set(stopwords.words("spanish"))
-STOPWORDS_ADICIONALES = {
+STOPWORDS = set(STOP_WORDS)
+STOPWORDS.update([
     'ser', 'estar', 'haber', 'tener', 'hacer', 'poder', 'deber',
     'querer', 'ir', 'ver', 'dar', 'saber', 'decir', 'llegar',
     'pasar', 'poner', 'parecer', 'quedar', 'creer', 'llevar',
@@ -121,8 +122,7 @@ STOPWORDS_ADICIONALES = {
     'ocho', 'nueve', 'diez', 'cien', 'mil', 'primero', 'segundo',
     'último', 'mismo', 'otro', 'todo', 'cada', 'mucho', 'poco',
     'más', 'menos', 'muy', 'tan', 'tanto', 'bastante', 'demasiado'
-}
-STOPWORDS.update(STOPWORDS_ADICIONALES)
+])
 
 # ---------------------------
 # FUNCIONES MEJORADAS DE PROCESAMIENTO
@@ -131,6 +131,9 @@ STOPWORDS.update(STOPWORDS_ADICIONALES)
 
 class TextProcessor:
     def __init__(self):
+        # Aseguramos que la instancia tenga acceso al objeto nlp global
+        global nlp 
+        self.nlp = nlp if 'nlp' in globals() else None
         self.cache = {}
         self.pos_weights = {
             'NOUN': 2.0,     # Sustantivos más importantes
@@ -331,65 +334,197 @@ class ReverseDict:
         self.vocab = list(grafo.nodes())
         self._preparar_tfidf()
 
+        # --- CORRECCIÓN: Calculamos la centralidad estática aquí ---
+        # Esto inicializa la variable self.centrality_scores que faltaba.
+        try:
+            # Usamos degree_centrality porque es muy rápido y eficiente para grafos grandes
+            # (Betweenness centrality sería mejor, pero tardaría horas en grafos grandes)
+            self.centrality_scores = nx.degree_centrality(self.grafo)
+        except Exception as e:
+            print(f"Advertencia: No se pudo calcular centralidad ({e}). Se usarán valores por defecto.")
+            self.centrality_scores = {n: 0.0 for n in self.grafo.nodes()}
+        # -----------------------------------------------------------
+
+        # Preparar el resto de componentes (TF-IDF, etc.)
+        self._preparar_tfidf()
+
+
     def _preparar_tfidf(self):
         """Preparar vectorizador TF-IDF para búsquedas."""
-        # Crear documentos para cada palabra usando sus contextos
+        # 1. Validación de seguridad: Si no hay palabras, salir sin error.
+        if not self.vocab:
+            self.tfidf = None
+            self.tfidf_matrix = None
+            return
+
+        # Crear documentos falsos basados en los contextos (vecinos)
         documentos = []
         for palabra in self.vocab:
             contexto = list(self.builder.word_contexts.get(palabra, [palabra]))
-            documentos.append(" ".join(contexto))
+            # Si el contexto está vacío, usamos la palabra misma para que no sea string vacío
+            texto = " ".join(contexto) if contexto else palabra
+            documentos.append(texto)
 
-        self.tfidf = TfidfVectorizer(max_features=1000, min_df=1, max_df=0.9)
-        self.tfidf_matrix = self.tfidf.fit_transform(documentos)
+        try:
+            # 2. SOLUCIÓN CLAVE: Cambiamos max_df a 1.0 (100%)
+            # Esto evita que elimine palabras incluso si aparecen en todos lados.
+            self.tfidf = TfidfVectorizer(
+                max_features=1000, 
+                min_df=1, 
+                max_df=1.0  # <--- CAMBIO IMPORTANTE: Antes era 0.9
+            )
+            self.tfidf_matrix = self.tfidf.fit_transform(documentos)
+            
+        except ValueError:
+            # Si aún así falla (ej. palabras de 1 letra que scikit borra), no rompemos la app
+            print("Advertencia: No se pudo generar matriz TF-IDF (vocabulario insuficiente).")
+            self.tfidf = None
+            self.tfidf_matrix = None
+    # ------------------------------------------------------------------
+    # ESTRATEGIAS DE BÚSQUEDA (MÉTODOS AUXILIARES)
+    # ------------------------------------------------------------------
 
-    def buscar_multiple_estrategias(self, definicion, top_k=15):
-        """Búsqueda combinando múltiples estrategias."""
-        # Procesar definición
-        definicion_limpia = self.processor.limpiar_texto_avanzado(definicion)
-        tokens_def = self.processor.lematizar_con_spacy(definicion_limpia) if nlp else \
-            self.processor.lematizar_freeling_mejorado(definicion_limpia)
+    def _estrategia_pagerank(self, tokens):
+        """Calcula relevancia usando PageRank personalizado."""
+        # Crear vector de personalización
+        personalization = {n: 0.0 for n in self.grafo.nodes()}
+        found_any = False
+        
+        for token in tokens:
+            if token in personalization:
+                personalization[token] = 1.0
+                found_any = True
+        
+        if not found_any:
+            return {}
 
-        lemas_def = [t['lema']
-                     for t in tokens_def if t['lema'] in self.grafo.nodes()]
+        try:
+            # Ejecutar PageRank con salto alto (alpha=0.85) hacia los términos de búsqueda
+            scores = nx.pagerank(self.grafo, alpha=0.85, personalization=personalization, weight='weight')
+            return scores
+        except Exception as e:
+            print(f"Error en PageRank: {e}")
+            return {}
 
-        if not lemas_def:
-            print(" No se encontraron palabras de la definición en el corpus.")
+    def _estrategia_cosine(self, tokens):
+        """Calcula similitud coseno basada en co-ocurrencia (TF-IDF)."""
+        if self.tfidf is None or self.tfidf_matrix is None:
+            return {}
+
+        try:
+            query_str = " ".join(tokens)
+            query_vec = self.tfidf.transform([query_str])
+            
+            from sklearn.metrics.pairwise import cosine_similarity
+            similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+            
+            scores = {}
+            # Usamos get_feature_names_out() para versiones nuevas de scikit-learn
+            # Si usas una versión vieja, podría ser get_feature_names()
+            try:
+                feature_names = self.tfidf.get_feature_names_out()
+            except AttributeError:
+                feature_names = self.tfidf.get_feature_names()
+
+            # --- CORRECCIÓN DE SEGURIDAD ---
+            # Iteramos solo hasta el límite más pequeño para evitar el error "Index out of bounds"
+            limit = min(len(similarities), len(feature_names))
+            
+            for idx in range(limit):
+                score = similarities[idx]
+                if score > 0:
+                    word = feature_names[idx]
+                    if word in self.grafo:
+                        scores[word] = float(score)
+            # -------------------------------
+            
+            return scores
+            
+        except Exception as e:
+            print(f"Error recuperable en Coseno: {e}")
+            return {}
+        
+    def _estrategia_spreading(self, tokens):
+        """Propagación de activación simple (vecinos directos)."""
+        scores = {}
+        for token in tokens:
+            if token in self.grafo:
+                # La palabra misma de la definición recibe puntos
+                scores[token] = scores.get(token, 0) + 1.0
+                
+                # Sus vecinos reciben puntos basados en el peso de la conexión
+                for neighbor, attr in self.grafo[token].items():
+                    weight = attr.get('weight', 1.0)
+                    # Atenuación: el vecino recibe menos que el nodo original
+                    scores[neighbor] = scores.get(neighbor, 0) + (weight * 0.5)
+        return scores
+
+
+
+    def buscar_multiple_estrategias(self, definition, top_k=10):
+        # 1. Preprocesar definición
+        tokens = self.processor.lematizar_con_spacy(definition)
+        filtered_tokens = [t['lema'] for t in tokens] # Usamos solo los lemas
+        
+        if not filtered_tokens:
             return []
 
-        # Estrategia 1: PageRank personalizado
-        scores_pr = self._pagerank_personalizado(lemas_def)
+        # 2. Calcular scores de cada estrategia
+        scores_pagerank = self._estrategia_pagerank(filtered_tokens)
+        scores_cosine = self._estrategia_cosine(filtered_tokens)
+        scores_spreading = self._estrategia_spreading(filtered_tokens)
+        
+        # Pasamos la 'definition' ORIGINAL (string completo) a la estrategia semántica
+        scores_semantic = self._estrategia_semantica(definition)
 
-        # Estrategia 2: Similitud TF-IDF
-        scores_tfidf = self._similitud_tfidf(definicion_limpia)
+        # Centralidad (ya la tienes precalculada, es estática)
+        scores_centrality = self.centrality_scores
 
-        # Estrategia 3: Propagación de activación
-        scores_prop = self._propagacion_activacion(lemas_def)
-
-        # Estrategia 4: Centralidad de intermediación local
-        scores_bet = self._betweenness_local(lemas_def)
-
-        # Combinar scores con pesos
-        scores_combinados = defaultdict(float)
-        pesos = {
-            'pagerank': 0.35,
-            'tfidf': 0.30,
-            'propagacion': 0.25,
-            'betweenness': 0.10
+        # 3. Combinar (Normalización y Pesos Ajustados)
+        # RECOMENDACIÓN: Dar más peso a la semántica y al coseno (contexto)
+        weights = {
+            "pagerank": 0.20,   # Antes 0.35
+            "cosine": 0.30,     # Antes 0.35 (Contexto local)
+            "spreading": 0.10,  # Antes 0.20
+            "centrality": 0.05, # Antes 0.10 (Importancia global)
+            "semantic": 0.35    # NUEVO: Significado profundo
         }
 
-        for palabra in self.vocab:
-            if palabra not in lemas_def:  # No incluir palabras de la definición
-                score = 0
-                score += scores_pr.get(palabra, 0) * pesos['pagerank']
-                score += scores_tfidf.get(palabra, 0) * pesos['tfidf']
-                score += scores_prop.get(palabra, 0) * pesos['propagacion']
-                score += scores_bet.get(palabra, 0) * pesos['betweenness']
-                scores_combinados[palabra] = score
+        final_scores = {}
+        all_nodes = set(self.grafo.nodes())
 
-        # Ordenar y retornar top-k
-        resultados = sorted(scores_combinados.items(),
-                            key=lambda x: x[1], reverse=True)
-        return [(palabra, score) for palabra, score in resultados[:top_k]]
+        # Normalizar scores (0 a 1) para poder sumarlos
+        def normalize(score_dict):
+            if not score_dict: return {}
+            max_val = max(score_dict.values())
+            if max_val == 0: return score_dict
+            return {k: v / max_val for k, v in score_dict.items()}
+
+        norm_pagerank = normalize(scores_pagerank)
+        norm_cosine = normalize(scores_cosine)
+        norm_spreading = normalize(scores_spreading)
+        norm_centrality = normalize(scores_centrality)
+        norm_semantic = normalize(scores_semantic) # Normalizar la semántica
+
+        for node in all_nodes:
+            s_pr = norm_pagerank.get(node, 0)
+            s_cos = norm_cosine.get(node, 0)
+            s_spr = norm_spreading.get(node, 0)
+            s_cen = norm_centrality.get(node, 0)
+            s_sem = norm_semantic.get(node, 0) # Score semántico
+
+            # Fórmula maestra
+            final_scores[node] = (
+                weights["pagerank"] * s_pr +
+                weights["cosine"] * s_cos +
+                weights["spreading"] * s_spr +
+                weights["centrality"] * s_cen +
+                weights["semantic"] * s_sem
+            )
+
+        # 4. Ordenar y devolver Top-K
+        ranked = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:top_k]
 
     def _pagerank_personalizado(self, lemas_def):
         """PageRank con personalización basada en la definición."""
@@ -512,8 +647,37 @@ class ReverseDict:
         resultados = sorted(
             scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return [r[0] for r in resultados]
+    
 
+    def _estrategia_semantica(self, definition_text):
+        """
+        Calcula similitud semántica usando la frase completa (con stopwords).
+        Esto permite capturar el contexto de verbos como 'hacer' o 'ser'.
+        """
+        scores = {}
+        
+        # Usamos el texto original, NO los tokens filtrados
+        if not self.processor.nlp:
+            return scores
+            
+        doc_def = self.processor.nlp(definition_text)
+        
+        if not doc_def.vector_norm:
+            return scores
 
+        # Comparamos contra los nodos del grafo
+        for node in self.grafo.nodes():
+            # Optimizacion: Si tienes muchos nodos, esto puede ser lento.
+            # En el futuro podríamos pre-calcular vectores de nodos.
+            doc_node = self.processor.nlp(node)
+            
+            if doc_node.vector_norm:
+                similitud = doc_def.similarity(doc_node)
+                if similitud > 0.35: # Umbral un poco más alto
+                    scores[node] = similitud
+                    
+        return scores
+    
 # ---------------------------------------------------------------
 # FUNCIONES DEL CORPUS (actualizadas con filtrado por metadatos)
 # ---------------------------------------------------------------
@@ -792,11 +956,11 @@ def obtener_metadatos_corpus(client, corpus_id):
 # --------------------------------------------
 
 
-def guardar_diccionario(nombre_diccionario, grafo, builder):
+# --- EN c3.py ---
+
+def guardar_diccionario(nombre_diccionario, grafo, builder, owner="Anónimo"):
     """
-    Guarda el grafo como diccionario nombrado en dos formatos:
-    - JSON: conserva toda la información (word_contexts, vocab_freq)
-    - GraphML: compatible con Gephi y herramientas externas
+    Guarda el grafo y registra al propietario (owner).
     """
     base_name = nombre_diccionario.replace(" ", "_")
     archivo_json = f"{base_name}.json"
@@ -805,7 +969,7 @@ def guardar_diccionario(nombre_diccionario, grafo, builder):
     ruta_json = os.path.join(GRAPH_DIR, archivo_json)
     ruta_graphml = os.path.join(GRAPH_DIR, archivo_graphml)
 
-    # ----- Guardar en formato JSON -----
+    # Datos a guardar
     data = {
         "nombre": nombre_diccionario,
         "nodes": list(grafo.nodes(data=True)),
@@ -817,7 +981,6 @@ def guardar_diccionario(nombre_diccionario, grafo, builder):
     with open(ruta_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    # ----- Guardar en formato GraphML -----
     try:
         nx.write_graphml(grafo, ruta_graphml)
     except Exception as e:
@@ -830,19 +993,71 @@ def guardar_diccionario(nombre_diccionario, grafo, builder):
         with open(index_path, "r", encoding="utf-8") as f:
             index = json.load(f)
 
-    if not any(d["nombre"] == nombre_diccionario for d in index):
-        index.append({
-            "nombre": nombre_diccionario,
-            "archivo_json": archivo_json,
-            "archivo_graphml": archivo_graphml
-        })
-        with open(index_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, ensure_ascii=False, indent=2)
+    # Eliminar entrada anterior si existe (sobrescribir)
+    index = [d for d in index if d["nombre"] != nombre_diccionario]
 
-    print(f"Diccionario '{nombre_diccionario}' guardado exitosamente en:")
-    print(f"   • JSON: {ruta_json}")
-    print(f"   • GraphML: {ruta_graphml}")
+    # Agregar nueva entrada con el owner
+    index.append({
+        "nombre": nombre_diccionario,
+        "archivo_json": archivo_json,
+        "archivo_graphml": archivo_graphml,
+        "owner": owner  # <--- NUEVO: Guardamos quién lo creó
+    })
 
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+
+    print(f"Diccionario '{nombre_diccionario}' guardado por '{owner}'.")
+
+
+def borrar_diccionario(nombre_diccionario, usuario_solicitante):
+    """
+    Borra un diccionario solo si el usuario_solicitante es el dueño.
+    Retorna (Exito:bool, Mensaje:str).
+    """
+    index_path = os.path.join(GRAPH_DIR, "diccionarios_index.json")
+    if not os.path.exists(index_path):
+        return False, "No existen diccionarios."
+
+    with open(index_path, "r", encoding="utf-8") as f:
+        index = json.load(f)
+
+    # Buscar el diccionario en el índice
+    target = next((d for d in index if d["nombre"] == nombre_diccionario), None)
+    
+    if not target:
+        return False, "Diccionario no encontrado."
+
+    # VALIDACIÓN DE PROPIEDAD
+    # Si el diccionario tiene owner, verificamos que coincida.
+    # Si no tiene owner (diccionarios viejos), permitimos borrar o restringimos (aquí restringimos).
+    owner_real = target.get("owner")
+    
+    # Nota: Si usuario_solicitante es None o vacío, asumimos "Anónimo" o bloqueamos.
+    if owner_real and owner_real != usuario_solicitante:
+        return False, f"Acceso denegado. Este diccionario pertenece a '{owner_real}'."
+
+    # Borrar archivos físicos
+    try:
+        if "archivo_json" in target:
+            ruta = os.path.join(GRAPH_DIR, target["archivo_json"])
+            if os.path.exists(ruta):
+                os.remove(ruta)
+        
+        if "archivo_graphml" in target:
+            ruta = os.path.join(GRAPH_DIR, target["archivo_graphml"])
+            if os.path.exists(ruta):
+                os.remove(ruta)
+            
+    except Exception as e:
+        return False, f"Error borrando archivos físicos: {e}"
+
+    # Actualizar y guardar índice sin el diccionario borrado
+    index = [d for d in index if d["nombre"] != nombre_diccionario]
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+
+    return True, f"Diccionario '{nombre_diccionario}' eliminado correctamente."
 
 def cargar_diccionario(nombre_diccionario):
     """Carga un diccionario guardado desde disco (formato JSON)."""
